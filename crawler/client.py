@@ -90,6 +90,7 @@ class GitHubClient:
         self.diag_dir = Path(diag_dir)
         self.events: Counter = Counter()
         self.skew: float | None = None
+        self.closing = False
         self.latency: dict[str, deque] = defaultdict(lambda: deque(maxlen=20_000))
         self.inflight: Counter = Counter()
         self.peak_inflight: Counter = Counter()
@@ -210,6 +211,8 @@ class GitHubClient:
             try:
                 r = await self.http.request(method, path, **kwargs)
             except httpx.TransportError as e:
+                if self.closing:
+                    raise asyncio.CancelledError from e
                 self.events[f"{bucket}_transport_error"] += 1
                 log.warning("%s %s transport error: %s", bucket, path, e)
                 await asyncio.sleep(2**attempt)

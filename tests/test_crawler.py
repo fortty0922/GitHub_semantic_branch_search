@@ -359,3 +359,49 @@ def test_late_header_from_previous_window_is_ignored():
     lim.update(remaining=1, reset=old_reset)
     assert lim.remaining == 30
     assert lim.interval(now) == pytest.approx((lim.reset - now) / 29, rel=1e-2)
+
+
+async def test_discovery_pause_and_resume_are_logged(tmp_path, monkeypatch, caplog):
+    import logging
+    monkeypatch.setattr(crawl, "PAUSE_CHECK", 0.01)
+    c = make_crawler(tmp_path, empty_search([]), max_backlog=2)
+    c.storage.upsert_repos([repo(1), repo(2)])
+    caplog.set_level(logging.INFO, logger="crawler")
+    task = asyncio.create_task(c.discover())
+    await asyncio.sleep(0.05)
+    assert c.paused_since is not None
+    c.storage.set_readme(1, "ok", "x")
+    await asyncio.sleep(0.05)
+    c.stop.set()
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    text = caplog.text
+    assert "discovery paused: backlog 2 >= 2" in text and "discovery resumed" in text
+    assert c.events["discovery_pauses"] == 1 and c.paused_total > 0
+
+
+async def test_graphql_batch_ceiling_survives_restart(tmp_path):
+    def handler(request):
+        if json.loads(request.content)["query"].count("repository(") > 6:
+            return httpx.Response(502)
+        return httpx.Response(200, json={"data": {}})
+
+    c = make_crawler(tmp_path, handler, batch_size=10)
+    c.storage.upsert_repos([repo(i) for i in range(1, 11)])
+    await c.graphql_readmes(c.storage.claim_readmes(10))
+    assert c.storage.get_state(crawl.BATCH_KEY) == 8
+
+    c2 = Crawler(Config(token="t", batch_size=10), client=c.client, storage=c.storage)
+    c2.load_batch_max()
+    assert c2.batch_max == c2.batch_size == 8
+
+
+async def test_transport_error_during_shutdown_is_not_counted():
+    def handler(request):
+        raise httpx.ReadError("")
+
+    client = GitHubClient("t", transport=httpx.MockTransport(handler))
+    client.closing = True
+    with pytest.raises(asyncio.CancelledError):
+        await client.get("search", "/x")
+    assert not client.events

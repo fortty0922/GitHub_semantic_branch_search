@@ -35,9 +35,11 @@ from the saved cursors.
   `httpx`/`httpcore` lines are suppressed.
 - File `logs/crawler-<YYYYmmdd-HHMMSS>.log` (one per run): only notable events — warnings and
   errors (rate limits, transport errors, invalid GraphQL JSON, truncated windows), GraphQL batch
-  splits, `session start` and `session summary`.
+  splits, discovery pause/resume, `session start` and `session summary`. Transport errors caused
+  by the run's own shutdown are not logged or counted.
 - `session summary` is one JSON object: duration, new repos, READMEs, requests and average
-  requests/min per bucket, event counters, latency (avg/p90/max) and peak in-flight requests
+  requests/min per bucket, event counters, seconds discovery spent paused, the GraphQL batch
+  ceiling, latency (avg/p90/max) and peak in-flight requests
   per bucket, seconds spent waiting in each limiter, measured clock skew, database totals by README status, and each tier's
   cursors.
 
@@ -50,7 +52,14 @@ from the saved cursors.
 | `core` | 5000 req/hr | `GET /repos/{owner}/{repo}/readme` (raw) — GraphQL misses, then regular pending |
 
 All pipelines run concurrently, so a single token uses every quota in full. The backlog cap
-pauses discovery if README fetching falls behind.
+pauses discovery if README fetching falls behind: while `pending + rest + queued >= --max-backlog`
+discovery checks again every 10 s, and the pause/resume is logged (`discovery paused: backlog N >= M`,
+`discovery resumed after Ns`); the per-minute console line ends with `| discovery paused`.
+
+Choosing `--max-backlog`: README workers consume ~1,700/min and a window can add up to ~2,000
+repos at once (two windows in flight), and the cap is only checked between windows. Below ~3,000
+README workers can run dry while discovery restarts; ~5,000 keeps both sides busy. The backlog
+may overshoot the cap by about one window's worth.
 
 ## README fetching
 
@@ -69,7 +78,11 @@ GitHub aborts GraphQL queries that run for about 10 s. With large batches this s
 HTTP 502 or as an HTTP 200 with an empty or truncated body (observed: 0 bytes after 11.2 s for
 50 repos). Any such failure splits the batch in half recursively and lowers a ceiling to 80% of
 the failed size (never below 5); the batch size then grows back by one per successful query,
-but only up to that ceiling, so it settles below the timeout instead of oscillating. REST workers take `rest` rows first and otherwise help with `pending`,
+but only up to that ceiling, so it settles below the timeout instead of oscillating. The ceiling
+is stored in `crawl_state` (`graphql_batch_max`) and reused by the next run, and is raised by one
+after every 100 consecutive successful queries (up to `--batch`) in case GitHub gets faster.
+
+REST workers take `rest` rows first and otherwise help with `pending`,
 so the core quota is never idle.
 
 Every invalid-JSON GraphQL response is logged (size, `Content-Length`, encodings, request id,
@@ -139,6 +152,8 @@ Per tier, `crawl_state` stores:
 | `lower` | Oldest creation time reached by the backward sweep |
 | `gap_top`, `gap_cursor` | Present while filling the range `(upper, gap_top]` created since the last run |
 | `span` | Adaptive window width |
+
+`crawl_state` also holds `graphql_batch_max`, the learned GraphQL batch ceiling.
 
 On each run a tier whose `upper` is more than 1 hour old first fills that gap (newest first),
 then continues the backward sweep from `lower`. Cursors move only after a window is fully paged,

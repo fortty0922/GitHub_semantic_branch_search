@@ -19,6 +19,9 @@ SUMMARY = {"summary": True}
 EARLIEST = int(datetime(2007, 10, 1, tzinfo=timezone.utc).timestamp())
 INDEX_LAG = 300
 GAP_MIN = 3600
+PAUSE_CHECK = 10
+BATCH_KEY = "graphql_batch_max"
+BATCH_PROBE_EVERY = 100
 SEARCH_CAP = 1000
 PER_PAGE = 100
 DEFAULT_SPAN = 7 * 86400
@@ -121,6 +124,9 @@ class Crawler:
         self.batch_size = cfg.batch_size
         self.batch_max = cfg.batch_size
         self.events: Counter = Counter()
+        self.paused_since: float | None = None
+        self.paused_total = 0.0
+        self.graphql_streak = 0
         self._prefetch: dict[tuple, tuple[asyncio.Task, asyncio.Future]] = {}
 
     # ---- discovery (search bucket) ----
@@ -211,9 +217,19 @@ class Crawler:
 
     async def discover(self) -> None:
         while not self.stop.is_set():
-            if self.storage.pending_count() >= self.cfg.max_backlog:
-                await asyncio.sleep(30)
+            backlog = self.storage.pending_count()
+            if backlog >= self.cfg.max_backlog:
+                if self.paused_since is None:
+                    self.paused_since = time.time()
+                    self.events["discovery_pauses"] += 1
+                    log.info("discovery paused: backlog %d >= %d", backlog, self.cfg.max_backlog, extra=SUMMARY)
+                await asyncio.sleep(PAUSE_CHECK)
                 continue
+            if self.paused_since is not None:
+                paused = time.time() - self.paused_since
+                self.paused_total += paused
+                self.paused_since = None
+                log.info("discovery resumed after %.0fs: backlog %d", paused, backlog, extra=SUMMARY)
             try:
                 if not await self.step():
                     await asyncio.sleep(60)
@@ -245,7 +261,8 @@ class Crawler:
             if len(rows) == 1:
                 self.storage.set_readme(rows[0][0], "rest", None)
                 return
-            self.batch_max = max(MIN_BATCH, min(self.batch_max, int(len(rows) * 0.8)))
+            self.set_batch_max(min(self.batch_max, int(len(rows) * 0.8)))
+            self.graphql_streak = 0
             self.batch_size = max(MIN_BATCH, len(rows) // 2)
             self.events["graphql_splits"] += 1
             log.info("GraphQL batch of %d failed (%s), splitting", len(rows), e, extra=SUMMARY)
@@ -253,6 +270,9 @@ class Crawler:
             await self.graphql_readmes(rows[:half])
             await self.graphql_readmes(rows[half:])
             return
+        self.graphql_streak += 1
+        if self.graphql_streak % BATCH_PROBE_EVERY == 0 and self.batch_max < self.cfg.batch_size:
+            self.set_batch_max(self.batch_max + 1)
         self.batch_size = min(self.batch_max, self.batch_size + 1)
 
         follow = {}
@@ -273,6 +293,18 @@ class Crawler:
             blob = ((data.get(alias) or {}).get("f") or {})
             text = blob.get("text")
             self._save_readme(repo_id, "ok" if text is not None else "rest", text)
+
+    def load_batch_max(self) -> None:
+        saved = self.storage.get_state(BATCH_KEY)
+        if saved:
+            self.batch_max = max(MIN_BATCH, min(int(saved), self.cfg.batch_size))
+            self.batch_size = self.batch_max
+
+    def set_batch_max(self, value: int) -> None:
+        value = max(MIN_BATCH, min(value, self.cfg.batch_size))
+        if value != self.batch_max:
+            self.batch_max = value
+            self.storage.set_state(BATCH_KEY, value)
 
     def _save_readme(self, repo_id: int, status: str, text: str | None) -> None:
         self.storage.set_readme(repo_id, status, text)
@@ -327,16 +359,20 @@ class Crawler:
                 rate = (lim.sent - last[name]) * 60 / self.cfg.report_every
                 last[name] = lim.sent
                 rates.append(f"{name} {rate:.1f}/min (remaining {lim.remaining})")
-            log.info("%s | new repos %d, readmes %d, backlog %d",
-                     ", ".join(rates), self.new_repos, self.readmes, self.storage.pending_count())
+            log.info("%s | new repos %d, readmes %d, backlog %d%s",
+                     ", ".join(rates), self.new_repos, self.readmes, self.storage.pending_count(),
+                     " | discovery paused" if self.paused_since is not None else "")
 
     # ---- lifecycle ----
 
     async def run(self) -> dict:
         self.storage.release_queued()
+        self.load_batch_max()
         await self.client.init_limits()
-        log.info("session start: duration=%ss workers=%d graphql_workers=%d batch=%d db_repos=%d quotas=%s",
-                 self.cfg.duration, self.cfg.workers, self.cfg.graphql_workers, self.cfg.batch_size,
+        log.info("session start: duration=%ss workers=%d graphql_workers=%d batch=%d (max %d) "
+                 "max_backlog=%d db_repos=%d quotas=%s",
+                 self.cfg.duration, self.cfg.workers, self.cfg.graphql_workers, self.batch_size, self.batch_max,
+                 self.cfg.max_backlog,
                  self.storage.stats()["repos"],
                  {n: l.remaining for n, l in self.client.limiters.items()}, extra=SUMMARY)
         queue: asyncio.Queue = asyncio.Queue()
@@ -357,6 +393,7 @@ class Crawler:
                     raise t.exception()
         finally:
             self.stop.set()
+            self.client.closing = True
             pending = [*tasks, stopper, *(t for t, _ in self._prefetch.values())]
             for t in pending:
                 t.cancel()
@@ -372,6 +409,9 @@ class Crawler:
                 "requests": {n: l.sent for n, l in self.client.limiters.items()},
                 "per_min": {n: round(l.sent * 60 / seconds, 1) for n, l in self.client.limiters.items()},
                 "events": dict(self.events + self.client.events),
+                "discovery_paused_s": round(self.paused_total + (
+                    time.time() - self.paused_since if self.paused_since is not None else 0)),
+                "graphql_batch_max": self.batch_max,
                 **self.client.metrics(),
                 "db_repos": db["repos"],
                 "db_readme": db["readme"],
