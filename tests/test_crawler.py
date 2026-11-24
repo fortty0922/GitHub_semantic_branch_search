@@ -207,6 +207,29 @@ async def test_graphql_batch_with_followup_and_split(tmp_path):
     assert queries[0].count("repository(") == 4 and c.readmes == 2
 
 
+async def test_truncated_graphql_response_splits_batch(tmp_path):
+    def handler(request):
+        q = json.loads(request.content)["query"]
+        if q.count("repository(") > 1:
+            return httpx.Response(200, content=b'{"data": {"r0": {"md": {"text": "cut')
+        alias = re.search(r"(r\d+): repository", q).group(1)
+        return httpx.Response(200, json={"data": {alias: {"md": {"text": "ok"}, "root": None}}})
+
+    c = make_crawler(tmp_path, handler, batch_size=4)
+    c.storage.upsert_repos([repo(i) for i in range(1, 5)])
+    await c.graphql_readmes(c.storage.claim_readmes(4))
+    assert c.storage.stats()["readme"] == {"ok": 4}
+
+
+async def test_requeue_keeps_finished_rows(tmp_path):
+    s = Storage(str(tmp_path / "db.sqlite"))
+    s.upsert_repos([repo(1), repo(2)])
+    s.claim_readmes(2)
+    s.set_readme(1, "ok", "x")
+    s.requeue([1, 2], "rest")
+    assert dict(s.db.execute("SELECT id, readme_status FROM repos")) == {1: "ok", 2: "rest"}
+
+
 async def test_run_stops_at_deadline_and_releases_queue(tmp_path):
     def handler(request):
         if request.url.path == "/rate_limit":

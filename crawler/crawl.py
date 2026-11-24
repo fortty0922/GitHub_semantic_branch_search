@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+import httpx
+
 from .client import GitHubClient, GraphQLError, RateLimitedError
 from .storage import Storage
 
@@ -200,8 +202,8 @@ class Crawler:
             try:
                 if not await self.step():
                     await asyncio.sleep(60)
-            except RateLimitedError as e:
-                log.warning("%s", e)
+            except (RateLimitedError, ValueError, httpx.TransportError) as e:
+                log.warning("discovery: %s", e)
                 await asyncio.sleep(60)
 
     # ---- README via GraphQL (graphql bucket) ----
@@ -216,8 +218,10 @@ class Crawler:
                 await self.graphql_readmes(rows)
             except RateLimitedError as e:
                 log.warning("%s", e)
-                for repo_id, _ in rows:
-                    self.storage.set_readme(repo_id, "pending", None)
+                self.storage.requeue([r[0] for r in rows], "pending")
+            except Exception:
+                log.exception("GraphQL README batch failed; handing %d repos to REST", len(rows))
+                self.storage.requeue([r[0] for r in rows], "rest")
 
     async def graphql_readmes(self, rows: list[tuple[int, str]]) -> None:
         try:
@@ -283,6 +287,10 @@ class Crawler:
             except RateLimitedError as e:
                 log.warning("%s", e)
                 self.storage.set_readme(repo_id, "pending", None)
+                continue
+            except Exception:
+                log.exception("README %s failed", full_name)
+                self.storage.set_readme(repo_id, "error", None)
                 continue
             if r.status_code == 200:
                 self._save_readme(repo_id, "ok", r.text)

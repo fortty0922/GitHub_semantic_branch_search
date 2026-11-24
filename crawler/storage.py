@@ -116,6 +116,14 @@ class Storage:
                 "UPDATE repos SET readme_status = ?, readme = ? WHERE id = ?", (status, text, repo_id)
             )
 
+    def requeue(self, ids: list[int], status: str) -> None:
+        """Reset rows that are still `queued`; rows already finished keep their result."""
+        with self.db:
+            self.db.executemany(
+                "UPDATE repos SET readme_status = ? WHERE id = ? AND readme_status = 'queued'",
+                [(status, i) for i in ids],
+            )
+
     def release_queued(self) -> None:
         with self.db:
             self.db.execute("UPDATE repos SET readme_status = 'pending' WHERE readme_status = 'queued'")

@@ -52,7 +52,8 @@ GraphQL can only read a file by exact path, so each batch query asks, per reposi
   binary README, or a failed follow-up → `rest`, retried by the REST workers, which use GitHub's
   own README detection and follow renames.
 
-A failing batch (timeout / 5xx) is split in half recursively; the batch size then grows back by
+A failing batch (timeout / 5xx, or a truncated HTTP 200 body — seen with large batches of long
+READMEs) is split in half recursively; the batch size then grows back by
 one per successful query. REST workers take `rest` rows first and otherwise help with `pending`,
 so the core quota is never idle.
 

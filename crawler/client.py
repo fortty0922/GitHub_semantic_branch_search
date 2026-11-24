@@ -115,7 +115,10 @@ class GitHubClient:
         r = await self.request("graphql", "POST", "/graphql", retry_5xx=False, json={"query": query})
         if r.status_code != 200:
             raise GraphQLError(f"HTTP {r.status_code}")
-        body = r.json()
+        try:
+            body = r.json()
+        except ValueError:
+            raise GraphQLError(f"truncated/invalid JSON ({len(r.content)} bytes)") from None
         if body.get("data") is None:
             raise GraphQLError(str(body.get("errors"))[:300])
         return body["data"]
