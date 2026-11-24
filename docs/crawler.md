@@ -37,7 +37,8 @@ from the saved cursors.
   errors (rate limits, transport errors, invalid GraphQL JSON, truncated windows), GraphQL batch
   splits, `session start` and `session summary`.
 - `session summary` is one JSON object: duration, new repos, READMEs, requests and average
-  requests/min per bucket, event counters, database totals by README status, and each tier's
+  requests/min per bucket, event counters, latency (avg/p90/max) and peak in-flight requests
+  per bucket, seconds spent waiting in each limiter, measured clock skew, database totals by README status, and each tier's
   cursors.
 
 ## Three quotas, one token
@@ -89,8 +90,11 @@ interval = (reset - now) / (remaining - reserve)
 - State is initialised from `GET /rate_limit` (free) and updated from every response's
   `X-RateLimit-Remaining` / `X-RateLimit-Reset` headers. `remaining` is decremented
   optimistically on send, so concurrent requests never overshoot.
+- Reset times are converted to local time using the clock skew measured from each response's
+  `Date` header (smoothed). Without this, a local clock running ahead of GitHub's made the
+  limiter assume a fresh search window too early and hit a 403.
 - `429`, or `403` with `remaining=0` / `Retry-After` / a "rate limit" message, blocks the bucket
-  until `Retry-After` or the reset time; without either it backs off `60 * 2^attempt` seconds
+  until `Retry-After` or the reset time (at least 1 s); without either it backs off `60 * 2^attempt` seconds
   (secondary limits). `5xx` and transport errors retry with exponential backoff.
 - GraphQL `RATE_LIMITED` errors (HTTP 200 with `remaining=0`) are treated like a 403 rate limit.
 - Expected steady state: search ≈ 29.7/min, core ≈ 82.5/min, graphql ≈ 82.5 queries/min —

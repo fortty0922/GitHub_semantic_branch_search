@@ -1,8 +1,10 @@
 import asyncio
 import logging
 import re
+import statistics
 import time
-from collections import Counter
+from collections import Counter, defaultdict, deque
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import httpx
@@ -31,6 +33,7 @@ class BucketLimiter:
         self.reset = time.time() + window
         self.blocked_until = 0.0
         self.sent = 0
+        self.waited = 0.0
         self._next = 0.0
         self._lock = asyncio.Lock()
 
@@ -43,11 +46,12 @@ class BucketLimiter:
             self.remaining = min(self.remaining, remaining)
         self.reset = max(self.reset, reset)
 
-    def update_from_headers(self, headers: httpx.Headers) -> None:
+    def update_from_headers(self, headers: httpx.Headers, skew: float = 0.0) -> None:
+        """`skew` = local clock minus server clock; reset times are converted to local time."""
         try:
             self.update(
                 int(headers["x-ratelimit-remaining"]),
-                float(headers["x-ratelimit-reset"]),
+                float(headers["x-ratelimit-reset"]) + skew,
                 int(headers.get("x-ratelimit-limit", 0)),
             )
         except (KeyError, ValueError):
@@ -70,6 +74,7 @@ class BucketLimiter:
             now = time.time()
             wait = max(self._next, self.blocked_until) - now
             if wait > 0:
+                self.waited += wait
                 await asyncio.sleep(wait)
                 now = time.time()
             self._next = now + self.interval(now)
@@ -82,6 +87,10 @@ class GitHubClient:
                  diag_dir: str | Path = "diagnostics"):
         self.diag_dir = Path(diag_dir)
         self.events: Counter = Counter()
+        self.skew: float | None = None
+        self.latency: dict[str, deque] = defaultdict(lambda: deque(maxlen=20_000))
+        self.inflight: Counter = Counter()
+        self.peak_inflight: Counter = Counter()
         self.http = httpx.AsyncClient(
             base_url=API,
             headers={
@@ -104,14 +113,38 @@ class GitHubClient:
         await self.http.aclose()
 
     async def init_limits(self) -> None:
+        sent = time.time()
         r = await self.http.get("/rate_limit")
         r.raise_for_status()
+        self._observe_clock(r, time.time() - sent)
         resources = r.json()["resources"]
         for name, limiter in self.limiters.items():
             res = resources[name]
             limiter.limit = res["limit"]
             limiter.remaining = res["remaining"]
-            limiter.reset = float(res["reset"])
+            limiter.reset = float(res["reset"]) + (self.skew or 0.0)
+
+    def _observe_clock(self, r: httpx.Response, latency: float) -> None:
+        try:
+            server = parsedate_to_datetime(r.headers["date"]).timestamp()
+        except (KeyError, TypeError, ValueError):
+            return
+        sample = time.time() - latency / 2 - server
+        self.skew = sample if self.skew is None else 0.9 * self.skew + 0.1 * sample
+
+    def metrics(self) -> dict:
+        def stats(values) -> dict:
+            v = sorted(values)
+            if not v:
+                return {}
+            return {"avg": round(statistics.fmean(v), 2), "p90": round(v[int(len(v) * 0.9)], 2),
+                    "max": round(v[-1], 2)}
+        return {
+            "latency_s": {b: stats(v) for b, v in self.latency.items()},
+            "peak_inflight": dict(self.peak_inflight),
+            "limiter_wait_s": {n: round(l.waited) for n, l in self.limiters.items()},
+            "clock_skew_s": None if self.skew is None else round(self.skew, 2),
+        }
 
     async def get(self, bucket: str, path: str, params=None, headers=None) -> httpx.Response:
         return await self.request(bucket, "GET", path, params=params, headers=headers)
@@ -169,6 +202,9 @@ class GitHubClient:
         limiter = self.limiters[bucket]
         for attempt in range(max_retries):
             await limiter.acquire()
+            self.inflight[bucket] += 1
+            self.peak_inflight[bucket] = max(self.peak_inflight[bucket], self.inflight[bucket])
+            sent = time.time()
             try:
                 r = await self.http.request(method, path, **kwargs)
             except httpx.TransportError as e:
@@ -176,9 +212,14 @@ class GitHubClient:
                 log.warning("%s %s transport error: %s", bucket, path, e)
                 await asyncio.sleep(2**attempt)
                 continue
-            limiter.update_from_headers(r.headers)
+            finally:
+                self.inflight[bucket] -= 1
+            latency = time.time() - sent
+            self.latency[bucket].append(latency)
+            self._observe_clock(r, latency)
+            limiter.update_from_headers(r.headers, self.skew or 0.0)
             if self._is_rate_limited(r):
-                until = self._retry_at(r, attempt)
+                until = max(self._retry_at(r, attempt, self.skew or 0.0), time.time() + 1)
                 self.events[f"{bucket}_rate_limited"] += 1
                 log.warning("%s rate limited (%s), pausing %.0fs", bucket, r.status_code, until - time.time())
                 limiter.block(until)
@@ -209,10 +250,10 @@ class GitHubClient:
         )
 
     @staticmethod
-    def _retry_at(r: httpx.Response, attempt: int) -> float:
+    def _retry_at(r: httpx.Response, attempt: int, skew: float = 0.0) -> float:
         now = time.time()
         if "retry-after" in r.headers:
             return now + float(r.headers["retry-after"])
         if r.headers.get("x-ratelimit-remaining") == "0" and "x-ratelimit-reset" in r.headers:
-            return float(r.headers["x-ratelimit-reset"]) + 1
+            return float(r.headers["x-ratelimit-reset"]) + skew + 1
         return now + 60 * 2**attempt

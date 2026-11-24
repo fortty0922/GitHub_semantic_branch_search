@@ -250,7 +250,7 @@ async def test_run_stops_at_deadline_and_releases_queue(tmp_path):
     assert time.time() - started < 5
     assert summary["readmes"] > 0
     assert "queued" not in c.storage.stats()["readme"]
-    assert {"per_min", "events", "db_readme", "cursors"} <= summary.keys()
+    assert {"per_min", "events", "db_readme", "cursors", "latency_s", "limiter_wait_s"} <= summary.keys()
 
 
 def test_summary_log_file_keeps_only_events(tmp_path):
@@ -327,3 +327,23 @@ def test_diagnostics_filename_is_windows_safe(tmp_path):
     client._dump_bad_response(r, "query { }", ValueError("x"))
     (dump,) = tmp_path.glob("graphql-*.txt")
     assert ":" not in dump.name
+
+
+async def test_reset_times_are_corrected_for_clock_skew():
+    from email.utils import formatdate
+
+    server_now = time.time() - 30
+
+    def handler(request):
+        return httpx.Response(200, json={}, headers={
+            "date": formatdate(server_now, usegmt=True),
+            "x-ratelimit-remaining": "10", "x-ratelimit-limit": "30",
+            "x-ratelimit-reset": str(int(server_now) + 60),
+        })
+
+    client = GitHubClient("t", transport=httpx.MockTransport(handler))
+    await client.get("search", "/x")
+    assert client.skew == pytest.approx(30, abs=2)
+    assert client.limiters["search"].reset == pytest.approx(time.time() + 60, abs=3)
+    m = client.metrics()
+    assert m["peak_inflight"]["search"] == 1 and m["latency_s"]["search"]["max"] >= 0

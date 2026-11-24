@@ -372,6 +372,7 @@ class Crawler:
                 "requests": {n: l.sent for n, l in self.client.limiters.items()},
                 "per_min": {n: round(l.sent * 60 / seconds, 1) for n, l in self.client.limiters.items()},
                 "events": dict(self.events + self.client.events),
+                **self.client.metrics(),
                 "db_repos": db["repos"],
                 "db_readme": db["readme"],
                 "cursors": {k: {f: iso(v) if f in ("upper", "lower") else v for f, v in s.items()}
