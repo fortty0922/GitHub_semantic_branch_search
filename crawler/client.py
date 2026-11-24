@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import time
 from collections import Counter
 from pathlib import Path
@@ -153,7 +154,8 @@ class GitHubClient:
         log.warning("GraphQL invalid JSON: %s", info)
         try:
             self.diag_dir.mkdir(parents=True, exist_ok=True)
-            path = self.diag_dir / f"graphql-{int(time.time() * 1000)}-{info['request_id'] or 'noid'}.txt"
+            rid = re.sub(r"[^\w.-]", "_", info["request_id"] or "noid")
+            path = self.diag_dir / f"graphql-{int(time.time() * 1000)}-{rid}.txt"
             lines = [f"{k}: {v}" for k, v in info.items()]
             lines += ["", "== response headers =="] + [f"{k}: {v}" for k, v in h.items()]
             lines += ["", "== query ==", query, "", "== body tail (last 2000 chars) ==", r.text[-2000:]]

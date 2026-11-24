@@ -19,7 +19,7 @@ copy .env.example .env    # then put a personal access token in GITHUB_TOKEN
 | `--hours` / `--minutes` | unlimited | Time budget for this run |
 | `--db` | `crawler.db` | SQLite file (global option, before the subcommand) |
 | `--workers` | 8 | Concurrent REST README requests |
-| `--graphql-workers` | 4 | Concurrent GraphQL README batches |
+| `--graphql-workers` | 6 | Concurrent GraphQL README batches |
 | `--batch` | 50 | Max repositories per GraphQL README query |
 | `--reserve` | 0.01 | Fraction of each quota deliberately left unused |
 | `--max-backlog` | 50000 | Pause discovery while this many READMEs are pending |
@@ -64,9 +64,11 @@ GraphQL can only read a file by exact path, so each batch query asks, per reposi
   binary README, or a failed follow-up → `rest`, retried by the REST workers, which use GitHub's
   own README detection and follow renames.
 
-A failing batch (timeout / 5xx, or a truncated HTTP 200 body — seen with large batches of long
-READMEs) is split in half recursively; the batch size then grows back by
-one per successful query. REST workers take `rest` rows first and otherwise help with `pending`,
+GitHub aborts GraphQL queries that run for about 10 s. With large batches this shows up as
+HTTP 502 or as an HTTP 200 with an empty or truncated body (observed: 0 bytes after 11.2 s for
+50 repos). Any such failure splits the batch in half recursively and lowers a ceiling to 80% of
+the failed size (never below 5); the batch size then grows back by one per successful query,
+but only up to that ceiling, so it settles below the timeout instead of oscillating. REST workers take `rest` rows first and otherwise help with `pending`,
 so the core quota is never idle.
 
 Every invalid-JSON GraphQL response is logged (size, `Content-Length`, encodings, request id,
@@ -105,10 +107,12 @@ returns at most 1000 results per query, so:
 - if a window's `total_count` > 1000 it is halved (down to 1 second) until it fits;
 - if it returns < 250, the next window doubles (up to 2 years). The learned width is saved per tier.
 - Windows are half-open `[start, end)` (queried as `start..end-1s`), so they never overlap.
-- Pages 2..N of a window are requested concurrently, and the next window's first page is
-  prefetched while the current one is paged. Search responses take 1–3 s, longer than the 2 s
-  pacing interval, so a strictly sequential loop would only reach about half the quota. A
-  prefetch is discarded if a higher-priority cursor (e.g. a new gap) takes over.
+- Windows are pipelined two deep: pages 2..N of a window are requested concurrently, and as soon
+  as a window's bounds are known the whole next window (probe, splits and pages) starts in the
+  background. Search responses take several seconds, longer than the 2 s pacing interval, so
+  waiting for each window's last page before starting the next capped the rate at ~19/min.
+  Results and cursors are still committed in window order; a prefetch is discarded if a
+  higher-priority cursor (e.g. a new gap) takes over.
 - Results inside a window are requested with `sort=stars&order=desc` (the search API has no
   `created` sort); every page of the window is fetched, so the order only affects which repos
   land in the database first.

@@ -50,7 +50,7 @@ class Config:
     db_path: str = "crawler.db"
     duration: float | None = None
     workers: int = 8
-    graphql_workers: int = 4
+    graphql_workers: int = 6
     batch_size: int = 50
     reserve_ratio: float = 0.01
     max_backlog: int = 50_000
@@ -119,8 +119,9 @@ class Crawler:
         self.new_repos = 0
         self.readmes = 0
         self.batch_size = cfg.batch_size
+        self.batch_max = cfg.batch_size
         self.events: Counter = Counter()
-        self._prefetch: dict[str, asyncio.Task] = {}
+        self._prefetch: dict[tuple, tuple[asyncio.Task, asyncio.Future]] = {}
 
     # ---- discovery (search bucket) ----
 
@@ -134,33 +135,44 @@ class Crawler:
                 break
         return data
 
-    async def first_page(self, q: str) -> dict:
-        task = self._prefetch.pop(q, None)
-        for stale in self._prefetch.values():
-            stale.cancel()
-        self._prefetch.clear()
-        return await task if task else await self.search(q, 1)
-
-    def prefetch(self, q: str) -> None:
-        task = asyncio.create_task(self.search(q, 1))
-        task.add_done_callback(lambda t: t.cancelled() or t.exception())
-        self._prefetch[q] = task
-
-    async def scan(self, tier: Tier, state: dict, end: int, floor: int) -> int:
-        """Fetch every repo of `tier` created in [start, end); returns start.
-
-        Pages 2..N are requested concurrently and the next window's first page is
-        prefetched, so search latency doesn't throttle the request rate.
-        """
-        span = state.get("span", DEFAULT_SPAN)
+    async def fetch_window(self, tier: Tier, end: int, floor: int, span: int, bounds: asyncio.Future) -> list[dict]:
+        """Probe/split until the window fits the search cap, publish (start, total) on `bounds`, then fetch all pages."""
         start = max(end - span, floor)
         while True:
             q = window_query(tier, start, end)
-            first = await self.first_page(q)
+            first = await self.search(q, 1)
             total = first["total_count"]
             if total <= SEARCH_CAP or end - start <= 1:
                 break
             start = end - max(1, (end - start) // 2)
+        bounds.set_result((start, total))
+        pages = range(2, math.ceil(min(total, SEARCH_CAP) / PER_PAGE) + 1)
+        return [first, *await asyncio.gather(*(self.search(q, p) for p in pages))]
+
+    def window_task(self, tier: Tier, end: int, floor: int, span: int) -> tuple[asyncio.Task, asyncio.Future]:
+        bounds = asyncio.get_running_loop().create_future()
+        task = asyncio.create_task(self.fetch_window(tier, end, floor, span, bounds))
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())
+        return task, bounds
+
+    def drop_prefetch(self) -> None:
+        for task, _ in self._prefetch.values():
+            task.cancel()
+        self._prefetch.clear()
+
+    async def scan(self, tier: Tier, state: dict, end: int, floor: int) -> int:
+        """Fetch every repo of `tier` created in [start, end); returns start.
+
+        Windows are pipelined: as soon as this window's bounds are known, the whole next
+        window (probe and pages) starts in the background, so search latency doesn't
+        throttle the request rate. Results are still committed in window order.
+        """
+        task, bounds = self._prefetch.pop((tier.key, end, floor), None) or             self.window_task(tier, end, floor, state.get("span", DEFAULT_SPAN))
+        self.drop_prefetch()
+        await asyncio.wait([task, bounds], return_when=asyncio.FIRST_COMPLETED)
+        if not bounds.done():
+            task.result()
+        start, total = bounds.result()
         if total > SEARCH_CAP:
             self.events["truncated_windows"] += 1
             log.warning("%s: %d repos in 1s at %s, truncated to %d", tier.key, total, iso(start), SEARCH_CAP)
@@ -168,11 +180,9 @@ class Crawler:
         width = end - start
         state["span"] = min(width * 2, MAX_SPAN) if total < SEARCH_CAP // 4 else width
         if start > floor:
-            self.prefetch(window_query(tier, max(start - state["span"], floor), start))
+            self._prefetch[(tier.key, start, floor)] = self.window_task(tier, start, floor, state["span"])
 
-        pages = range(2, math.ceil(min(total, SEARCH_CAP) / PER_PAGE) + 1)
-        results = [first, *await asyncio.gather(*(self.search(q, p) for p in pages))]
-        for page in results:
+        for page in await task:
             self.new_repos += self.storage.upsert_repos(page["items"])
         self.events["windows"] += 1
         log.info("%s %s..%s: %d repos", tier.key, iso(start), iso(end), total)
@@ -235,6 +245,7 @@ class Crawler:
             if len(rows) == 1:
                 self.storage.set_readme(rows[0][0], "rest", None)
                 return
+            self.batch_max = max(MIN_BATCH, min(self.batch_max, int(len(rows) * 0.8)))
             self.batch_size = max(MIN_BATCH, len(rows) // 2)
             self.events["graphql_splits"] += 1
             log.info("GraphQL batch of %d failed (%s), splitting", len(rows), e, extra=SUMMARY)
@@ -242,7 +253,7 @@ class Crawler:
             await self.graphql_readmes(rows[:half])
             await self.graphql_readmes(rows[half:])
             return
-        self.batch_size = min(self.cfg.batch_size, self.batch_size + 1)
+        self.batch_size = min(self.batch_max, self.batch_size + 1)
 
         follow = {}
         for i, (repo_id, full_name) in enumerate(rows):
@@ -346,7 +357,7 @@ class Crawler:
                     raise t.exception()
         finally:
             self.stop.set()
-            pending = [*tasks, stopper, *self._prefetch.values()]
+            pending = [*tasks, stopper, *(t for t, _ in self._prefetch.values())]
             for t in pending:
                 t.cancel()
             await asyncio.gather(*pending, return_exceptions=True)

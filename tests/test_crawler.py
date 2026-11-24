@@ -276,3 +276,54 @@ def test_summary_log_file_keeps_only_events(tmp_path):
         root.handlers[:] = saved
     assert "rate limited" in text and "session summary" in text
     assert "routine window line" not in text and "HTTP Request" not in text
+
+
+async def test_next_window_is_fetched_while_current_pages_load(tmp_path, monkeypatch):
+    now = int(time.time())
+    monkeypatch.setattr(crawl, "EARLIEST", now - 10 * 86400)
+    ids = itertools.count(1)
+    windows_inflight = set()
+    overlap = False
+
+    async def handler(request):
+        nonlocal overlap
+        end = RANGE.search(request.url.params["q"]).group(2)
+        windows_inflight.add(end)
+        overlap = overlap or len(windows_inflight) > 1
+        await asyncio.sleep(0.05)
+        windows_inflight.discard(end)
+        return httpx.Response(200, json={"total_count": 500, "incomplete_results": False,
+                                         "items": [repo(next(ids)) for _ in range(100)]})
+
+    c = make_crawler(tmp_path, handler, tiers=(Tier(0, 0),))
+    c.storage.set_state("tier:0-0", {"upper": now, "lower": now, "span": 86400})
+    for _ in range(3):
+        await c.step()
+    assert overlap
+    stats = c.storage.stats()
+    assert stats["repos"] == stats["distinct_ids"] == 1500
+
+
+async def test_batch_ceiling_drops_after_timeout(tmp_path):
+    def handler(request):
+        q = json.loads(request.content)["query"]
+        if q.count("repository(") > 3:
+            return httpx.Response(502)
+        return httpx.Response(200, json={"data": {}})
+
+    c = make_crawler(tmp_path, handler, batch_size=8)
+    c.storage.upsert_repos([repo(i) for i in range(1, 9)])
+    await c.graphql_readmes(c.storage.claim_readmes(8))
+    for _ in range(10):
+        c.storage.upsert_repos([repo(100)])
+        await c.graphql_readmes([(100, "o/r100")])
+    assert c.batch_max < 8 and c.batch_size <= c.batch_max
+
+
+def test_diagnostics_filename_is_windows_safe(tmp_path):
+    client = GitHubClient("t", diag_dir=tmp_path)
+    r = httpx.Response(200, content=b"", headers={"x-github-request-id": "D1FF:F34AF:923A9"},
+                       request=httpx.Request("POST", "https://api.github.com/graphql"))
+    client._dump_bad_response(r, "query { }", ValueError("x"))
+    (dump,) = tmp_path.glob("graphql-*.txt")
+    assert ":" not in dump.name

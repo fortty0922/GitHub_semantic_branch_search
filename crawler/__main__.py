@@ -22,7 +22,7 @@ def main() -> None:
     budget.add_argument("--hours", type=float)
     budget.add_argument("--minutes", type=float)
     run.add_argument("--workers", type=int, default=8, help="concurrent REST README requests")
-    run.add_argument("--graphql-workers", type=int, default=4)
+    run.add_argument("--graphql-workers", type=int, default=6)
     run.add_argument("--batch", type=int, default=50, help="max repos per GraphQL README query")
     run.add_argument("--reserve", type=float, default=0.01, help="fraction of each quota left unused")
     run.add_argument("--max-backlog", type=int, default=50_000)
