@@ -23,10 +23,22 @@ copy .env.example .env    # then put a personal access token in GITHUB_TOKEN
 | `--batch` | 50 | Max repositories per GraphQL README query |
 | `--reserve` | 0.01 | Fraction of each quota deliberately left unused |
 | `--max-backlog` | 50000 | Pause discovery while this many READMEs are pending |
+| `--log-dir` | `logs` | Directory for the summary log file |
 
 When the time budget ends (or on Ctrl+C) all tasks are cancelled, READMEs claimed but not
 fetched are returned to `pending`, and a session summary is logged. The next `run` continues
 from the saved cursors.
+
+## Logging
+
+- Console: INFO and above from the crawler (window results, per-minute rates). Per-request
+  `httpx`/`httpcore` lines are suppressed.
+- File `logs/crawler-<YYYYmmdd-HHMMSS>.log` (one per run): only notable events — warnings and
+  errors (rate limits, transport errors, invalid GraphQL JSON, truncated windows), GraphQL batch
+  splits, `session start` and `session summary`.
+- `session summary` is one JSON object: duration, new repos, READMEs, requests and average
+  requests/min per bucket, event counters, database totals by README status, and each tier's
+  cursors.
 
 ## Three quotas, one token
 

@@ -4,6 +4,7 @@ import logging
 import math
 import re
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -13,6 +14,7 @@ from .client import GitHubClient, GraphQLError, RateLimitedError
 from .storage import Storage
 
 log = logging.getLogger("crawler")
+SUMMARY = {"summary": True}
 
 EARLIEST = int(datetime(2007, 10, 1, tzinfo=timezone.utc).timestamp())
 INDEX_LAG = 300
@@ -117,6 +119,7 @@ class Crawler:
         self.new_repos = 0
         self.readmes = 0
         self.batch_size = cfg.batch_size
+        self.events: Counter = Counter()
         self._prefetch: dict[str, asyncio.Task] = {}
 
     # ---- discovery (search bucket) ----
@@ -159,6 +162,7 @@ class Crawler:
                 break
             start = end - max(1, (end - start) // 2)
         if total > SEARCH_CAP:
+            self.events["truncated_windows"] += 1
             log.warning("%s: %d repos in 1s at %s, truncated to %d", tier.key, total, iso(start), SEARCH_CAP)
 
         width = end - start
@@ -170,6 +174,7 @@ class Crawler:
         results = [first, *await asyncio.gather(*(self.search(q, p) for p in pages))]
         for page in results:
             self.new_repos += self.storage.upsert_repos(page["items"])
+        self.events["windows"] += 1
         log.info("%s %s..%s: %d repos", tier.key, iso(start), iso(end), total)
         return start
 
@@ -231,7 +236,8 @@ class Crawler:
                 self.storage.set_readme(rows[0][0], "rest", None)
                 return
             self.batch_size = max(MIN_BATCH, len(rows) // 2)
-            log.info("GraphQL batch of %d failed (%s), splitting", len(rows), e)
+            self.events["graphql_splits"] += 1
+            log.info("GraphQL batch of %d failed (%s), splitting", len(rows), e, extra=SUMMARY)
             half = len(rows) // 2
             await self.graphql_readmes(rows[:half])
             await self.graphql_readmes(rows[half:])
@@ -297,7 +303,8 @@ class Crawler:
             elif r.status_code == 404:
                 self.storage.set_readme(repo_id, "none", None)
             else:
-                log.warning("README %s: HTTP %s", full_name, r.status_code)
+                self.events[f"readme_http_{r.status_code}"] += 1
+                log.info("README %s: HTTP %s", full_name, r.status_code)
                 self.storage.set_readme(repo_id, "error", None)
 
     async def report(self) -> None:
@@ -317,6 +324,10 @@ class Crawler:
     async def run(self) -> dict:
         self.storage.release_queued()
         await self.client.init_limits()
+        log.info("session start: duration=%ss workers=%d graphql_workers=%d batch=%d db_repos=%d quotas=%s",
+                 self.cfg.duration, self.cfg.workers, self.cfg.graphql_workers, self.cfg.batch_size,
+                 self.storage.stats()["repos"],
+                 {n: l.remaining for n, l in self.client.limiters.items()}, extra=SUMMARY)
         queue: asyncio.Queue = asyncio.Queue()
         tasks = [
             asyncio.create_task(self.discover()),
@@ -341,11 +352,19 @@ class Crawler:
             await asyncio.gather(*pending, return_exceptions=True)
             self.storage.release_queued()
             await self.client.close()
+            seconds = max(time.time() - started, 1)
+            db = self.storage.stats()
             summary = {
-                "seconds": round(time.time() - started),
+                "seconds": round(seconds),
                 "new_repos": self.new_repos,
                 "readmes": self.readmes,
                 "requests": {n: l.sent for n, l in self.client.limiters.items()},
+                "per_min": {n: round(l.sent * 60 / seconds, 1) for n, l in self.client.limiters.items()},
+                "events": dict(self.events + self.client.events),
+                "db_repos": db["repos"],
+                "db_readme": db["readme"],
+                "cursors": {k: {f: iso(v) if f in ("upper", "lower") else v for f, v in s.items()}
+                            for k, s in db["state"].items()},
             }
-            log.info("session summary: %s", summary)
+            log.info("session summary: %s", json.dumps(summary, ensure_ascii=False), extra=SUMMARY)
         return summary

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from collections import Counter
 from pathlib import Path
 
 import httpx
@@ -79,6 +80,7 @@ class GitHubClient:
     def __init__(self, token: str, reserve_ratio: float = 0.01, transport: httpx.AsyncBaseTransport | None = None,
                  diag_dir: str | Path = "diagnostics"):
         self.diag_dir = Path(diag_dir)
+        self.events: Counter = Counter()
         self.http = httpx.AsyncClient(
             base_url=API,
             headers={
@@ -147,6 +149,7 @@ class GitHubClient:
             "elapsed_s": self._elapsed(r),
             "error": str(error),
         }
+        self.events["graphql_invalid_json"] += 1
         log.warning("GraphQL invalid JSON: %s", info)
         try:
             self.diag_dir.mkdir(parents=True, exist_ok=True)
@@ -167,12 +170,14 @@ class GitHubClient:
             try:
                 r = await self.http.request(method, path, **kwargs)
             except httpx.TransportError as e:
+                self.events[f"{bucket}_transport_error"] += 1
                 log.warning("%s %s transport error: %s", bucket, path, e)
                 await asyncio.sleep(2**attempt)
                 continue
             limiter.update_from_headers(r.headers)
             if self._is_rate_limited(r):
                 until = self._retry_at(r, attempt)
+                self.events[f"{bucket}_rate_limited"] += 1
                 log.warning("%s rate limited (%s), pausing %.0fs", bucket, r.status_code, until - time.time())
                 limiter.block(until)
                 continue

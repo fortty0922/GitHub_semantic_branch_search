@@ -250,3 +250,29 @@ async def test_run_stops_at_deadline_and_releases_queue(tmp_path):
     assert time.time() - started < 5
     assert summary["readmes"] > 0
     assert "queued" not in c.storage.stats()["readme"]
+    assert {"per_min", "events", "db_readme", "cursors"} <= summary.keys()
+
+
+def test_summary_log_file_keeps_only_events(tmp_path):
+    import logging
+    from crawler.__main__ import setup_logging
+
+    root = logging.getLogger()
+    saved = root.handlers[:]
+    root.handlers.clear()
+    try:
+        path = setup_logging(str(tmp_path / "logs"))
+        log = logging.getLogger("crawler")
+        log.info("routine window line")
+        logging.getLogger("httpx").info("HTTP Request: GET /x")
+        log.warning("core rate limited")
+        log.info("session summary: {}", extra=crawl.SUMMARY)
+        for h in root.handlers:
+            h.flush()
+        text = path.read_text(encoding="utf-8")
+    finally:
+        for h in root.handlers:
+            h.close()
+        root.handlers[:] = saved
+    assert "rate limited" in text and "session summary" in text
+    assert "routine window line" not in text and "HTTP Request" not in text
