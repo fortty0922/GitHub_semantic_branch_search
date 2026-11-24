@@ -1,11 +1,13 @@
 import asyncio
+import json
 import logging
 import math
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from .client import GitHubClient, RateLimitedError
+from .client import GitHubClient, GraphQLError, RateLimitedError
 from .storage import Storage
 
 log = logging.getLogger("crawler")
@@ -44,6 +46,8 @@ class Config:
     db_path: str = "crawler.db"
     duration: float | None = None
     workers: int = 8
+    graphql_workers: int = 4
+    batch_size: int = 50
     reserve_ratio: float = 0.01
     max_backlog: int = 50_000
     tiers: tuple[Tier, ...] = field(default=DEFAULT_TIERS)
@@ -54,6 +58,54 @@ def iso(ts: int) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def window_query(tier: Tier, start: int, end: int) -> str:
+    return f"{tier.query} created:{iso(start)}..{iso(end - 1)} fork:true"
+
+
+MIN_BATCH = 5
+README_NAME = re.compile(r"^readme(\.[\w-]+)*$", re.I)
+README_EXT_RANK = (".md", ".markdown", ".rst", ".txt", ".adoc", ".org", "")
+
+
+def blob_field(path: str) -> str:
+    return f"f: object(expression: {json.dumps('HEAD:' + path)}) {{ ... on Blob {{ text }} }}"
+
+
+ROOT_FIELDS = (
+    'md: object(expression: "HEAD:README.md") { ... on Blob { text } } '
+    'root: object(expression: "HEAD:") { ... on Tree { entries { name type } } }'
+)
+
+
+def build_query(repos: dict[str, tuple[str, str]]) -> str:
+    parts = []
+    for alias, (full_name, fields) in repos.items():
+        owner, name = full_name.split("/", 1)
+        parts.append(f"{alias}: repository(owner: {json.dumps(owner)}, name: {json.dumps(name)}) {{ {fields} }}")
+    return "query { " + " ".join(parts) + " }"
+
+
+def classify(repo: dict | None) -> tuple[str, str | None]:
+    """Map a GraphQL repository result to (status, text-or-path). status: ok | none | rest | fetch."""
+    if repo is None:
+        return "rest", None
+    if (repo.get("md") or {}).get("text") is not None:
+        return "ok", repo["md"]["text"]
+    root = repo.get("root")
+    if root is None:
+        return "none", None
+    entries = root.get("entries") or []
+    names = [e["name"] for e in entries if e["type"] == "blob" and README_NAME.match(e["name"]) and e["name"] != "README.md"]
+    if names:
+        def rank(n: str) -> int:
+            ext = n[6:].lower()
+            return README_EXT_RANK.index(ext) if ext in README_EXT_RANK else len(README_EXT_RANK)
+        return "fetch", min(names, key=rank)
+    if any(e["type"] == "tree" and e["name"].lower() in (".github", "docs") for e in entries):
+        return "rest", None
+    return "none", None
+
+
 class Crawler:
     def __init__(self, cfg: Config, client: GitHubClient | None = None, storage: Storage | None = None):
         self.cfg = cfg
@@ -62,6 +114,8 @@ class Crawler:
         self.stop = asyncio.Event()
         self.new_repos = 0
         self.readmes = 0
+        self.batch_size = cfg.batch_size
+        self._prefetch: dict[str, asyncio.Task] = {}
 
     # ---- discovery (search bucket) ----
 
@@ -75,13 +129,29 @@ class Crawler:
                 break
         return data
 
+    async def first_page(self, q: str) -> dict:
+        task = self._prefetch.pop(q, None)
+        for stale in self._prefetch.values():
+            stale.cancel()
+        self._prefetch.clear()
+        return await task if task else await self.search(q, 1)
+
+    def prefetch(self, q: str) -> None:
+        task = asyncio.create_task(self.search(q, 1))
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())
+        self._prefetch[q] = task
+
     async def scan(self, tier: Tier, state: dict, end: int, floor: int) -> int:
-        """Fetch every repo of `tier` created in [start, end); returns start."""
+        """Fetch every repo of `tier` created in [start, end); returns start.
+
+        Pages 2..N are requested concurrently and the next window's first page is
+        prefetched, so search latency doesn't throttle the request rate.
+        """
         span = state.get("span", DEFAULT_SPAN)
         start = max(end - span, floor)
         while True:
-            q = f"{tier.query} created:{iso(start)}..{iso(end - 1)} fork:true"
-            first = await self.search(q, 1)
+            q = window_query(tier, start, end)
+            first = await self.first_page(q)
             total = first["total_count"]
             if total <= SEARCH_CAP or end - start <= 1:
                 break
@@ -89,12 +159,15 @@ class Crawler:
         if total > SEARCH_CAP:
             log.warning("%s: %d repos in 1s at %s, truncated to %d", tier.key, total, iso(start), SEARCH_CAP)
 
-        self.new_repos += self.storage.upsert_repos(first["items"])
-        for page in range(2, math.ceil(min(total, SEARCH_CAP) / PER_PAGE) + 1):
-            self.new_repos += self.storage.upsert_repos((await self.search(q, page))["items"])
-
         width = end - start
         state["span"] = min(width * 2, MAX_SPAN) if total < SEARCH_CAP // 4 else width
+        if start > floor:
+            self.prefetch(window_query(tier, max(start - state["span"], floor), start))
+
+        pages = range(2, math.ceil(min(total, SEARCH_CAP) / PER_PAGE) + 1)
+        results = [first, *await asyncio.gather(*(self.search(q, p) for p in pages))]
+        for page in results:
+            self.new_repos += self.storage.upsert_repos(page["items"])
         log.info("%s %s..%s: %d repos", tier.key, iso(start), iso(end), total)
         return start
 
@@ -131,14 +204,70 @@ class Crawler:
                 log.warning("%s", e)
                 await asyncio.sleep(60)
 
-    # ---- README (core bucket) ----
+    # ---- README via GraphQL (graphql bucket) ----
+
+    async def graphql_worker(self) -> None:
+        while not self.stop.is_set():
+            rows = self.storage.claim_readmes(self.batch_size)
+            if not rows:
+                await asyncio.sleep(5)
+                continue
+            try:
+                await self.graphql_readmes(rows)
+            except RateLimitedError as e:
+                log.warning("%s", e)
+                for repo_id, _ in rows:
+                    self.storage.set_readme(repo_id, "pending", None)
+
+    async def graphql_readmes(self, rows: list[tuple[int, str]]) -> None:
+        try:
+            data = await self.client.graphql(build_query({f"r{i}": (n, ROOT_FIELDS) for i, (_, n) in enumerate(rows)}))
+        except GraphQLError as e:
+            if len(rows) == 1:
+                self.storage.set_readme(rows[0][0], "rest", None)
+                return
+            self.batch_size = max(MIN_BATCH, len(rows) // 2)
+            log.info("GraphQL batch of %d failed (%s), splitting", len(rows), e)
+            half = len(rows) // 2
+            await self.graphql_readmes(rows[:half])
+            await self.graphql_readmes(rows[half:])
+            return
+        self.batch_size = min(self.cfg.batch_size, self.batch_size + 1)
+
+        follow = {}
+        for i, (repo_id, full_name) in enumerate(rows):
+            status, value = classify(data.get(f"r{i}"))
+            if status == "fetch":
+                follow[f"r{i}"] = (repo_id, full_name, value)
+            else:
+                self._save_readme(repo_id, status, value)
+        if not follow:
+            return
+        query = build_query({a: (n, blob_field(path)) for a, (_, n, path) in follow.items()})
+        try:
+            data = await self.client.graphql(query)
+        except GraphQLError:
+            data = {}
+        for alias, (repo_id, _, _) in follow.items():
+            blob = ((data.get(alias) or {}).get("f") or {})
+            text = blob.get("text")
+            self._save_readme(repo_id, "ok" if text is not None else "rest", text)
+
+    def _save_readme(self, repo_id: int, status: str, text: str | None) -> None:
+        self.storage.set_readme(repo_id, status, text)
+        if status == "ok":
+            self.readmes += 1
+
+    # ---- README via REST (core bucket): GraphQL misses first, then regular pending ----
 
     async def feed(self, queue: asyncio.Queue) -> None:
         while not self.stop.is_set():
             if queue.qsize() >= self.cfg.workers:
                 await asyncio.sleep(0.5)
                 continue
-            batch = self.storage.claim_readmes(self.cfg.workers * 2)
+            want = self.cfg.workers * 2
+            batch = self.storage.claim_readmes(want, status="rest")
+            batch += self.storage.claim_readmes(want - len(batch))
             if not batch:
                 await asyncio.sleep(5)
             for item in batch:
@@ -156,8 +285,7 @@ class Crawler:
                 self.storage.set_readme(repo_id, "pending", None)
                 continue
             if r.status_code == 200:
-                self.storage.set_readme(repo_id, "ok", r.text)
-                self.readmes += 1
+                self._save_readme(repo_id, "ok", r.text)
             elif r.status_code == 404:
                 self.storage.set_readme(repo_id, "none", None)
             else:
@@ -187,6 +315,7 @@ class Crawler:
             asyncio.create_task(self.feed(queue)),
             asyncio.create_task(self.report()),
             *(asyncio.create_task(self.fetch_readmes(queue)) for _ in range(self.cfg.workers)),
+            *(asyncio.create_task(self.graphql_worker()) for _ in range(self.cfg.graphql_workers)),
         ]
         stopper = asyncio.create_task(self.stop.wait())
         started = time.time()
@@ -198,9 +327,10 @@ class Crawler:
                     raise t.exception()
         finally:
             self.stop.set()
-            for t in [*tasks, stopper]:
+            pending = [*tasks, stopper, *self._prefetch.values()]
+            for t in pending:
                 t.cancel()
-            await asyncio.gather(*tasks, stopper, return_exceptions=True)
+            await asyncio.gather(*pending, return_exceptions=True)
             self.storage.release_queued()
             await self.client.close()
             summary = {

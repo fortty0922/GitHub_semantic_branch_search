@@ -12,6 +12,10 @@ class RateLimitedError(Exception):
     pass
 
 
+class GraphQLError(Exception):
+    pass
+
+
 class BucketLimiter:
     """Paces requests evenly over what is left of the current rate-limit window."""
 
@@ -87,6 +91,7 @@ class GitHubClient:
         self.limiters = {
             "core": BucketLimiter("core", 5000, 3600, reserve_ratio),
             "search": BucketLimiter("search", 30, 60, reserve_ratio),
+            "graphql": BucketLimiter("graphql", 5000, 3600, reserve_ratio),
         }
 
     async def close(self) -> None:
@@ -102,12 +107,26 @@ class GitHubClient:
             limiter.remaining = res["remaining"]
             limiter.reset = float(res["reset"])
 
-    async def get(self, bucket: str, path: str, params=None, headers=None, max_retries: int = 6) -> httpx.Response:
+    async def get(self, bucket: str, path: str, params=None, headers=None) -> httpx.Response:
+        return await self.request(bucket, "GET", path, params=params, headers=headers)
+
+    async def graphql(self, query: str) -> dict:
+        """Returns `data`; raises GraphQLError on server errors/timeouts so the caller can shrink the batch."""
+        r = await self.request("graphql", "POST", "/graphql", retry_5xx=False, json={"query": query})
+        if r.status_code != 200:
+            raise GraphQLError(f"HTTP {r.status_code}")
+        body = r.json()
+        if body.get("data") is None:
+            raise GraphQLError(str(body.get("errors"))[:300])
+        return body["data"]
+
+    async def request(self, bucket: str, method: str, path: str, max_retries: int = 6,
+                      retry_5xx: bool = True, **kwargs) -> httpx.Response:
         limiter = self.limiters[bucket]
         for attempt in range(max_retries):
             await limiter.acquire()
             try:
-                r = await self.http.get(path, params=params, headers=headers)
+                r = await self.http.request(method, path, **kwargs)
             except httpx.TransportError as e:
                 log.warning("%s %s transport error: %s", bucket, path, e)
                 await asyncio.sleep(2**attempt)
@@ -118,7 +137,7 @@ class GitHubClient:
                 log.warning("%s rate limited (%s), pausing %.0fs", bucket, r.status_code, until - time.time())
                 limiter.block(until)
                 continue
-            if r.status_code >= 500:
+            if r.status_code >= 500 and retry_5xx:
                 await asyncio.sleep(2**attempt)
                 continue
             return r
@@ -128,6 +147,13 @@ class GitHubClient:
     def _is_rate_limited(r: httpx.Response) -> bool:
         if r.status_code == 429:
             return True
+        if r.status_code == 200:
+            if r.headers.get("x-ratelimit-remaining") != "0" or r.url.path != "/graphql":
+                return False
+            try:
+                return any(e.get("type") == "RATE_LIMITED" for e in r.json().get("errors") or [])
+            except ValueError:
+                return False
         if r.status_code != 403:
             return False
         return (

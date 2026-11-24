@@ -95,15 +95,20 @@ class Storage:
                 (key, json.dumps(value)),
             )
 
-    def claim_readmes(self, limit: int) -> list[tuple[int, str]]:
+    def claim_readmes(self, limit: int, status: str = "pending") -> list[tuple[int, str]]:
+        if limit <= 0:
+            return []
         with self.db:
-            return self.db.execute(
+            rows = self.db.execute(
                 "UPDATE repos SET readme_status = 'queued' WHERE id IN ("
-                " SELECT id FROM repos WHERE readme_status = 'pending'"
+                " SELECT id FROM repos WHERE readme_status = ?"
                 " ORDER BY stars DESC, created_at DESC LIMIT ?) "
-                "RETURNING id, full_name",
-                (limit,),
+                "RETURNING id, full_name, stars, created_at",
+                (status, limit),
             ).fetchall()
+        rows.sort(key=lambda r: r[3] or "", reverse=True)
+        rows.sort(key=lambda r: r[2] or 0, reverse=True)
+        return [(r[0], r[1]) for r in rows]
 
     def set_readme(self, repo_id: int, status: str, text: str | None) -> None:
         with self.db:
@@ -117,7 +122,7 @@ class Storage:
 
     def pending_count(self) -> int:
         return self.db.execute(
-            "SELECT COUNT(*) FROM repos WHERE readme_status IN ('pending', 'queued')"
+            "SELECT COUNT(*) FROM repos WHERE readme_status IN ('pending', 'rest', 'queued')"
         ).fetchone()[0]
 
     def stats(self) -> dict:

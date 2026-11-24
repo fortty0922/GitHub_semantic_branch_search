@@ -1,5 +1,6 @@
 import asyncio
 import itertools
+import json
 import re
 import time
 from datetime import datetime
@@ -140,11 +141,79 @@ async def test_dense_window_is_split_and_fully_paged(tmp_path, monkeypatch):
     assert c.storage.get_state("tier:0-0")["lower"] == crawl.EARLIEST
 
 
+async def test_search_pages_run_concurrently(tmp_path, monkeypatch):
+    now = int(time.time())
+    monkeypatch.setattr(crawl, "EARLIEST", now - 86400)
+    ids = itertools.count(1)
+    inflight, peak = 0, 0
+
+    async def handler(request):
+        nonlocal inflight, peak
+        inflight += 1
+        peak = max(peak, inflight)
+        await asyncio.sleep(0.05)
+        inflight -= 1
+        return httpx.Response(200, json={"total_count": 500, "incomplete_results": False,
+                                         "items": [repo(next(ids)) for _ in range(100)]})
+
+    c = make_crawler(tmp_path, handler, tiers=(Tier(0, 0),))
+    c.storage.set_state("tier:0-0", {"upper": now, "lower": now, "span": 86400 // 2})
+    await c.step()
+    assert peak >= 4
+    assert len(c._prefetch) == 1
+    await c.step()
+    assert c.storage.get_state("tier:0-0")["lower"] == crawl.EARLIEST
+
+
+def test_classify_graphql_results():
+    tree = lambda *e: {"md": None, "root": {"entries": [{"name": n, "type": t} for n, t in e]}}
+    assert crawl.classify(None) == ("rest", None)
+    assert crawl.classify({"md": {"text": "hi"}, "root": None}) == ("ok", "hi")
+    assert crawl.classify({"md": None, "root": None}) == ("none", None)
+    assert crawl.classify(tree(("readme.txt", "blob"), ("README.rst", "blob"))) == ("fetch", "README.rst")
+    assert crawl.classify(tree(("docs", "tree"), ("main.py", "blob"))) == ("rest", None)
+    assert crawl.classify(tree(("main.py", "blob"))) == ("none", None)
+
+
+async def test_graphql_batch_with_followup_and_split(tmp_path):
+    queries = []
+
+    def handler(request):
+        q = json.loads(request.content)["query"]
+        queries.append(q)
+        if q.count("repository(") > 2:
+            return httpx.Response(502)
+        data = {}
+        for alias, name in re.findall(r'(r\d+): repository\(owner: "o", name: "(\w+)"\)', q):
+            if "HEAD:README.rst" in q:
+                data[alias] = {"f": {"text": "rst body"}}
+            elif name == "r1":
+                data[alias] = {"md": {"text": "md body"}, "root": None}
+            elif name == "r2":
+                data[alias] = {"md": None, "root": {"entries": [{"name": "README.rst", "type": "blob"}]}}
+            elif name == "r3":
+                data[alias] = {"md": None, "root": None}
+            else:
+                data[alias] = None
+        return httpx.Response(200, json={"data": data})
+
+    c = make_crawler(tmp_path, handler, batch_size=4)
+    c.storage.upsert_repos([repo(i, stars=10 - i) for i in range(1, 5)])
+    rows = c.storage.claim_readmes(4)
+    await c.graphql_readmes(rows)
+    got = dict(c.storage.db.execute("SELECT id, readme_status FROM repos"))
+    assert got == {1: "ok", 2: "ok", 3: "none", 4: "rest"}
+    assert c.storage.db.execute("SELECT readme FROM repos WHERE id = 2").fetchone()[0] == "rst body"
+    assert queries[0].count("repository(") == 4 and c.readmes == 2
+
+
 async def test_run_stops_at_deadline_and_releases_queue(tmp_path):
     def handler(request):
         if request.url.path == "/rate_limit":
             big = {"limit": 10**9, "remaining": 10**9, "reset": int(time.time()) + 3600}
-            return httpx.Response(200, json={"resources": {"core": big, "search": big}})
+            return httpx.Response(200, json={"resources": {"core": big, "search": big, "graphql": big}})
+        if request.url.path == "/graphql":
+            return httpx.Response(200, json={"data": {}})
         if request.url.path.endswith("/readme"):
             return httpx.Response(200, text="# readme")
         return httpx.Response(200, json={"total_count": 0, "incomplete_results": False, "items": []})
