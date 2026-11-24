@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from pathlib import Path
 
 import httpx
 
@@ -75,7 +76,9 @@ class BucketLimiter:
 
 
 class GitHubClient:
-    def __init__(self, token: str, reserve_ratio: float = 0.01, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(self, token: str, reserve_ratio: float = 0.01, transport: httpx.AsyncBaseTransport | None = None,
+                 diag_dir: str | Path = "diagnostics"):
+        self.diag_dir = Path(diag_dir)
         self.http = httpx.AsyncClient(
             base_url=API,
             headers={
@@ -117,11 +120,44 @@ class GitHubClient:
             raise GraphQLError(f"HTTP {r.status_code}")
         try:
             body = r.json()
-        except ValueError:
+        except ValueError as e:
+            self._dump_bad_response(r, query, e)
             raise GraphQLError(f"truncated/invalid JSON ({len(r.content)} bytes)") from None
         if body.get("data") is None:
             raise GraphQLError(str(body.get("errors"))[:300])
         return body["data"]
+
+    @staticmethod
+    def _elapsed(r: httpx.Response) -> float | None:
+        try:
+            return round(r.elapsed.total_seconds(), 2)
+        except RuntimeError:
+            return None
+
+    def _dump_bad_response(self, r: httpx.Response, query: str, error: ValueError) -> None:
+        h = r.headers
+        info = {
+            "bytes": len(r.content),
+            "content_length": h.get("content-length"),
+            "content_encoding": h.get("content-encoding"),
+            "transfer_encoding": h.get("transfer-encoding"),
+            "request_id": h.get("x-github-request-id"),
+            "http_version": r.http_version,
+            "repos_in_batch": query.count("repository("),
+            "elapsed_s": self._elapsed(r),
+            "error": str(error),
+        }
+        log.warning("GraphQL invalid JSON: %s", info)
+        try:
+            self.diag_dir.mkdir(parents=True, exist_ok=True)
+            path = self.diag_dir / f"graphql-{int(time.time() * 1000)}-{info['request_id'] or 'noid'}.txt"
+            lines = [f"{k}: {v}" for k, v in info.items()]
+            lines += ["", "== response headers =="] + [f"{k}: {v}" for k, v in h.items()]
+            lines += ["", "== query ==", query, "", "== body tail (last 2000 chars) ==", r.text[-2000:]]
+            path.write_text("\n".join(lines), encoding="utf-8")
+            log.warning("GraphQL invalid JSON details written to %s", path)
+        except OSError as e:
+            log.warning("could not write GraphQL diagnostics: %s", e)
 
     async def request(self, bucket: str, method: str, path: str, max_retries: int = 6,
                       retry_5xx: bool = True, **kwargs) -> httpx.Response:

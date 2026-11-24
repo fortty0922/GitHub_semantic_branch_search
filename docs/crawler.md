@@ -57,6 +57,10 @@ READMEs) is split in half recursively; the batch size then grows back by
 one per successful query. REST workers take `rest` rows first and otherwise help with `pending`,
 so the core quota is never idle.
 
+Every invalid-JSON GraphQL response is logged (size, `Content-Length`, encodings, request id,
+batch size, elapsed time) and dumped to `diagnostics/graphql-<ms>-<request-id>.txt` with the
+response headers, the query and the last 2000 characters of the body.
+
 Note: when a repository has READMEs both in the root and in `.github/`, GitHub's UI prefers
 `.github/`; the GraphQL path stores the root one.
 

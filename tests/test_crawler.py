@@ -21,7 +21,7 @@ def ts(s: str) -> int:
 
 
 def make_crawler(tmp_path, handler, tiers=crawl.DEFAULT_TIERS, **cfg):
-    client = GitHubClient("t", transport=httpx.MockTransport(handler))
+    client = GitHubClient("t", transport=httpx.MockTransport(handler), diag_dir=tmp_path / "diag")
     for lim in client.limiters.values():
         lim.limit = lim.remaining = 10**9
     return Crawler(Config(token="t", tiers=tiers, **cfg), client=client, storage=Storage(str(tmp_path / "db.sqlite")))
@@ -219,6 +219,8 @@ async def test_truncated_graphql_response_splits_batch(tmp_path):
     c.storage.upsert_repos([repo(i) for i in range(1, 5)])
     await c.graphql_readmes(c.storage.claim_readmes(4))
     assert c.storage.stats()["readme"] == {"ok": 4}
+    dumps = list((tmp_path / "diag").glob("graphql-*.txt"))
+    assert dumps and "repos_in_batch: 4" in dumps[0].read_text(encoding="utf-8")
 
 
 async def test_requeue_keeps_finished_rows(tmp_path):
