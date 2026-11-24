@@ -73,7 +73,7 @@ but only up to that ceiling, so it settles below the timeout instead of oscillat
 so the core quota is never idle.
 
 Every invalid-JSON GraphQL response is logged (size, `Content-Length`, encodings, request id,
-batch size, elapsed time) and dumped to `diagnostics/graphql-<ms>-<request-id>.txt` with the
+batch size, elapsed time) and dumped to `diagnostics/graphql-<ms>-<n>-<request-id>.txt` with the
 response headers, the query and the last 2000 characters of the body.
 
 Note: when a repository has READMEs both in the root and in `.github/`, GitHub's UI prefers
@@ -93,6 +93,10 @@ interval = (reset - now) / (remaining - reserve)
 - Reset times are converted to local time using the clock skew measured from each response's
   `Date` header (smoothed). Without this, a local clock running ahead of GitHub's made the
   limiter assume a fresh search window too early and hit a 403.
+- Headers whose reset time is older than the current window are ignored. Search responses take
+  ~4 s, so replies to requests sent just before a rollover used to arrive afterwards with
+  `remaining≈0` and stall the search limiter for a whole minute (measured: 220 s of 300 s spent
+  waiting, 22 req/min instead of ~30).
 - `429`, or `403` with `remaining=0` / `Retry-After` / a "rate limit" message, blocks the bucket
   until `Retry-After` or the reset time (at least 1 s); without either it backs off `60 * 2^attempt` seconds
   (secondary limits). `5xx` and transport errors retry with exponential backoff.

@@ -40,7 +40,9 @@ class BucketLimiter:
     def update(self, remaining: int, reset: float, limit: int | None = None) -> None:
         if limit:
             self.limit = limit
-        if reset > self.reset + 1:
+        if reset < self.reset - 5:
+            return  # late response from a window we already rolled over
+        if reset > self.reset + 5:
             self.remaining = remaining
         else:
             self.remaining = min(self.remaining, remaining)
@@ -188,7 +190,7 @@ class GitHubClient:
         try:
             self.diag_dir.mkdir(parents=True, exist_ok=True)
             rid = re.sub(r"[^\w.-]", "_", info["request_id"] or "noid")
-            path = self.diag_dir / f"graphql-{int(time.time() * 1000)}-{rid}.txt"
+            path = self.diag_dir / f"graphql-{int(time.time() * 1000)}-{self.events['graphql_invalid_json']}-{rid}.txt"
             lines = [f"{k}: {v}" for k, v in info.items()]
             lines += ["", "== response headers =="] + [f"{k}: {v}" for k, v in h.items()]
             lines += ["", "== query ==", query, "", "== body tail (last 2000 chars) ==", r.text[-2000:]]

@@ -220,7 +220,7 @@ async def test_truncated_graphql_response_splits_batch(tmp_path):
     await c.graphql_readmes(c.storage.claim_readmes(4))
     assert c.storage.stats()["readme"] == {"ok": 4}
     dumps = list((tmp_path / "diag").glob("graphql-*.txt"))
-    assert dumps and "repos_in_batch: 4" in dumps[0].read_text(encoding="utf-8")
+    assert any("repos_in_batch: 4" in d.read_text(encoding="utf-8") for d in dumps)
 
 
 async def test_requeue_keeps_finished_rows(tmp_path):
@@ -347,3 +347,15 @@ async def test_reset_times_are_corrected_for_clock_skew():
     assert client.limiters["search"].reset == pytest.approx(time.time() + 60, abs=3)
     m = client.metrics()
     assert m["peak_inflight"]["search"] == 1 and m["latency_s"]["search"]["max"] >= 0
+
+
+def test_late_header_from_previous_window_is_ignored():
+    lim = BucketLimiter("search", 30, 60)
+    now = time.time()
+    old_reset = now - 1
+    lim.remaining, lim.reset = 2, old_reset
+    lim.interval(now)
+    assert lim.remaining == 30
+    lim.update(remaining=1, reset=old_reset)
+    assert lim.remaining == 30
+    assert lim.interval(now) == pytest.approx((lim.reset - now) / 29, rel=1e-2)
