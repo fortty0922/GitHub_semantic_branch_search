@@ -245,12 +245,14 @@ async def test_run_stops_at_deadline_and_releases_queue(tmp_path):
 
     c = make_crawler(tmp_path, handler, duration=0.5, report_every=0.1)
     c.storage.upsert_repos([repo(i) for i in range(1, 40)])
+    c.storage.set_state(crawl.BATCH_KEY, 20)
     started = time.time()
     summary = await c.run()
     assert time.time() - started < 5
     assert summary["readmes"] > 0
     assert "queued" not in c.storage.stats()["readme"]
     assert {"per_min", "events", "db_readme", "cursors", "latency_s", "limiter_wait_s"} <= summary.keys()
+    assert crawl.BATCH_KEY not in summary["cursors"]
 
 
 def test_summary_log_file_keeps_only_events(tmp_path):

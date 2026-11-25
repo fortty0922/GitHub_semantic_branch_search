@@ -416,7 +416,7 @@ class Crawler:
                 "db_repos": db["repos"],
                 "db_readme": db["readme"],
                 "cursors": {k: {f: iso(v) if f in ("upper", "lower") else v for f, v in s.items()}
-                            for k, s in db["state"].items()},
+                            for k, s in db["state"].items() if isinstance(s, dict)},
             }
             log.info("session summary: %s", json.dumps(summary, ensure_ascii=False), extra=SUMMARY)
         return summary
