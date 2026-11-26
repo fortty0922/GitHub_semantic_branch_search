@@ -30,8 +30,8 @@ def test_domain_tiers_keep_star_priority():
     ]
 
 
-def test_load_real_config():
-    queries, target = domains.load("config")
+def test_load_example_config(example_config):
+    queries, target = domains.load(example_config)
     assert queries and all(queries.values()) and target > 0
 
 
@@ -82,3 +82,12 @@ async def test_domain_stops_at_target(tmp_path, monkeypatch):
     r = report(c.storage, tiers, domain_target=5)
     assert r["domains"]["ml"] == {"repos": counts["ml"], "target": 5, "reached": True}
     assert all(not s["sweep_done"] for s in r["tiers"].values())
+
+
+def test_queries_from_topic_map_then_extra():
+    doms = {"ml": {"seed_topics": ["machine-learning"], "queries": ["\"machine learning\" in:description"]},
+            "os": {"seed_topics": ["operating-system"], "queries": []}}
+    topic_map = {"ml": {"topics": ["pytorch", "machine-learning", "cuda"]}}
+    q = domains.queries(doms, topic_map, max_topics=2)
+    assert q["ml"] == ["topic:pytorch", "topic:machine-learning", "\"machine learning\" in:description"]
+    assert q["os"] == ["topic:operating-system"]

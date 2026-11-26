@@ -22,6 +22,13 @@ CREATE TABLE IF NOT EXISTS awesome_lists (
     readme TEXT NOT NULL,
     fetched_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS topic_discovery (
+    topic TEXT PRIMARY KEY,
+    domain TEXT NOT NULL,
+    round INTEGER NOT NULL,
+    count INTEGER NOT NULL,
+    assoc REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS topic_expansion (
     topic TEXT PRIMARY KEY,
     domain TEXT NOT NULL,

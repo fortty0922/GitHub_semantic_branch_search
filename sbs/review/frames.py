@@ -70,6 +70,16 @@ def label_crosstab(store: Store) -> pd.DataFrame:
     return pd.crosstab(df["domain"], df["label_source"], margins=True)
 
 
+def topic_map(topic_map: dict, top: int = 15) -> pd.DataFrame:
+    rows = [(d, len(e.get("topics", [])), ", ".join(e.get("topics", [])[:top])) for d, e in topic_map.items()]
+    return pd.DataFrame(rows, columns=["domain", "topics", "most frequent"]).set_index("domain")
+
+
+def topic_discovery(store: Store) -> pd.DataFrame:
+    """Discovery details; only present in the database discover-topics ran on."""
+    return query(store, "SELECT * FROM topic_discovery ORDER BY domain, round, count DESC")
+
+
 def topic_expansion(store: Store) -> pd.DataFrame:
     return query(store, "SELECT * FROM topic_expansion ORDER BY domain, count DESC")
 

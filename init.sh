@@ -37,6 +37,14 @@ if [ ! -f .env ]; then
     echo "Created .env; set GITHUB_TOKEN in it before crawling."
 fi
 
+for example in config/*.toml.example; do
+    target="${example%.example}"
+    if [ ! -f "$target" ]; then
+        cp "$example" "$target"
+        echo "Created $target from its example."
+    fi
+done
+
 cat <<EOF
 
 Setup complete. Next:

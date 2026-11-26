@@ -1,3 +1,8 @@
+[corpus.topics]
+min_count = 30
+min_assoc = 0.3
+max_rounds = 3
+
 [corpus.clean]
 inline_code_max_words = 3
 
@@ -38,3 +43,4 @@ manual_exclude = "data/manual/exclude.csv"
 
 [crawler.domain]
 target_per_domain = 20000
+max_topic_queries = 40

@@ -42,6 +42,13 @@ if not exist .env (
     echo Created .env; set GITHUB_TOKEN in it before crawling.
 )
 
+for %%F in (config\*.toml.example) do (
+    if not exist "config\%%~nF" (
+        copy "%%F" "config\%%~nF" >nul
+        echo Created config\%%~nF from its example.
+    )
+)
+
 echo.
 echo Setup complete. Next:
 echo   %VENV_PY% -m crawler check

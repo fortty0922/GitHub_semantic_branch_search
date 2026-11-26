@@ -1,0 +1,26 @@
+# Domains, the seed topics that topic discovery grows into config/topic_map.toml, and extra
+# (non-topic) search queries for the crawler's domain mode. Topic queries come from topic_map.toml.
+
+[machine-learning]
+seed_topics = ["machine-learning"]
+queries = ["\"machine learning\" in:description"]
+
+[devops]
+seed_topics = ["devops"]
+queries = ["devops in:description"]
+
+[data-engineering]
+seed_topics = ["data-engineering"]
+queries = ["\"data pipeline\" in:description", "\"data engineering\" in:description"]
+
+[web-backend]
+seed_topics = ["backend"]
+queries = ["backend in:description"]
+
+[computer-graphics]
+seed_topics = ["computer-graphics"]
+queries = ["renderer in:description", "\"computer graphics\" in:description"]
+
+[operating-systems]
+seed_topics = ["operating-system"]
+queries = ["\"operating system\" in:description", "kernel in:description"]

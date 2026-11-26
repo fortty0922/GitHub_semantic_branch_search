@@ -7,9 +7,9 @@ from dotenv import load_dotenv
 from crawler.client import GitHubClient
 from sbs.common.store import Store
 from sbs.corpus import awesome_fetch, clean, dedup, manual, split, tokens
-from sbs.corpus.labels import assign
+from sbs.corpus.labels import assign, discover_topics
 
-CORPUS_STEPS = ("clean", "tokenize", "dedup", "fetch-awesome", "label", "split", "all")
+CORPUS_STEPS = ("discover-topics", "clean", "tokenize", "dedup", "fetch-awesome", "label", "split", "all")
 ALL = ("clean", "tokenize", "dedup", "label", "split")
 
 
@@ -38,5 +38,7 @@ def run_step(step: str, store: Store, settings: dict) -> None:
         asyncio.run(fetch_awesome(store, settings))
     elif step == "label":
         assign.run(store, settings, manual.read_labels(experiment["paths"]["manual_labels"]))
+    elif step == "discover-topics":
+        discover_topics.run(store, settings)
     elif step == "split":
         split.run(store, settings)
