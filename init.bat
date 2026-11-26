@@ -48,4 +48,5 @@ echo   %VENV_PY% -m crawler check
 echo   %VENV_PY% -m crawler fill        (or: run --hours 2)
 echo   %VENV_PY% -m sbs corpus all
 echo   %VENV_PY% -m pytest
+echo   %VENV_PY% -m jupyter lab notebooks/corpus_review.ipynb
 endlocal

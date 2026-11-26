@@ -55,6 +55,11 @@ sbs/
       classifier.py       TF-IDF + logistic regression for the remaining repositories
       assign.py           applies the three sources in order and writes `labels`
     split.py              frozen test set; train_ids() / test_ids()
+    manual.py             manual label / exclusion override files
+    steps.py              corpus step dispatch (CLI and notebook)
+  review/
+    frames.py             pandas views of each stage's tables
+    checks.py             residual-markup scan, test-split check
   terms/
     extract.py            multi-word term extraction (branching entropy + PMI)
     filter.py             polysemy candidates (per-domain min count, Jaccard, TF-IDF)
@@ -79,7 +84,11 @@ sbs/
     controls.py           shuffled labels, monosemous terms
     audit.py              label audit and error-analysis export / summary
 
+notebooks/
+  corpus_review.ipynb     review of the corpus stage and manual fixes (committed without outputs)
+
 data/                     generated artifacts (git-ignored) except the frozen test-set id file
+                          and data/manual/ (override files)
 tests/
   crawler/                crawler tests
   common/                 settings tests

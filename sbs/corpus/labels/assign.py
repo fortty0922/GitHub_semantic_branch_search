@@ -21,7 +21,8 @@ def features(description: str | None, topics_json: str | None, token_text: str) 
     return " ".join((head, tags, token_text.replace("\n", " ")))
 
 
-def run(store: Store, settings: dict) -> dict[str, int]:
+def run(store: Store, settings: dict, manual: dict[int, str] | None = None) -> dict[str, int]:
+    manual = manual or {}
     topic_index = topics.invert(settings["topic_map"])
     awesome_index = awesome.index(store)
     labels: dict[int, tuple[str, str, float | None]] = {}
@@ -29,8 +30,13 @@ def run(store: Store, settings: dict) -> dict[str, int]:
     train_texts, train_labels = [], []
     for repo_id, full_name, description, topics_json, token_text in store.iter_rows(KEPT):
         text = features(description, topics_json, token_text)
-        domain = topics.label(topics_json, topic_index)
-        source = "topic"
+        if repo_id in manual:
+            domain, source = manual[repo_id], "manual"
+        else:
+            domain, source = topics.label(topics_json, topic_index), "topic"
+        if domain == classifier.UNKNOWN:
+            labels[repo_id] = (domain, source, None)
+            continue
         if domain is None:
             domain, source = awesome_index.get(full_name.lower()), "awesome"
         if domain is None:

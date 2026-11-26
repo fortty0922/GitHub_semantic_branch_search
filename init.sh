@@ -44,4 +44,5 @@ Setup complete. Next:
   $venv_py -m crawler fill        (or: run --hours 2)
   $venv_py -m sbs corpus all
   $venv_py -m pytest
+  $venv_py -m jupyter lab notebooks/corpus_review.ipynb
 EOF

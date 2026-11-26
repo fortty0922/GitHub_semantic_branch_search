@@ -68,6 +68,7 @@ boundaries. `tokens` stores one sentence per line with space-separated tokens, p
 
 Each repository gets one `dedup.status`, decided in this order:
 
+0. `excluded`: listed in the manual exclusion file (see [Manual overrides](#manual-overrides-corpusmanualpy)).
 1. `fork` / `template`: repositories flagged `fork` or `is_template`. The step runs only when
    those columns exist in `repos`; a database from the original crawler schema skips it and logs that.
 2. `empty` (no tokens) and `short` (fewer than `min_tokens` tokens).
@@ -80,7 +81,7 @@ the others point to it through `kept_id`. Later stages read only `kept` reposito
 
 ### Domain labels (`corpus/labels/`)
 
-Applied in order to `kept` repositories, first match wins:
+Applied in order to `kept` repositories, first match wins (a manual label, if any, comes first):
 
 1. **Topics** (`topics.py`): `config/topic_map.toml` maps GitHub topics to domains; the domain with
    the most matching topics wins, a tie gives no label.
@@ -94,6 +95,37 @@ Applied in order to `kept` repositories, first match wins:
 
 `label_source` (`topic`, `awesome`, `model`) and, for `model`, the predicted probability
 (`confidence`) are stored so the audit can report accuracy per source.
+
+### Manual overrides (`corpus/manual.py`)
+
+Two CSV files, paths `paths.manual_labels` and `paths.manual_exclude` in
+`config/experiment.toml`, hold hand-made corrections; they are committed with the repository so the
+corpus can be rebuilt with the same decisions:
+
+- labels file (`repo_id,domain,note`): the domain wins over every other source
+  (`label_source = 'manual'`) and is used as classifier training data. `unknown` keeps a
+  repository out of the labelled set.
+- exclusion file (`repo_id,reason`): the repository gets dedup status `excluded` before any other
+  dedup step, so another member of its duplicate group can be kept.
+
+`dedup` and `label` read the files on every run, so overrides survive re-runs. The frozen test set
+is never redrawn: an override on a test repository changes its label (or removes it from the
+labelled set) as evaluation will read it, and `train_ids()` follows the current labels.
+
+### Review notebook (`notebooks/corpus_review.ipynb`)
+
+Opens the database given by `SBS_DB` (default `crawler.db`) with the config in `SBS_CONFIG`
+(default `config`) and shows, per step: raw vs cleaned samples, length ratios and residual markup;
+token counts and frequent tokens; dedup statuses and the largest exact / near groups; labels by
+domain and source, classifier confidence, samples per domain, agreement with the crawl domain
+(domain mode) and awesome-list coverage; the test-split check. The last section edits the override
+files through `corpus/manual.py` and can re-run `dedup` and `label` in place. The helpers it uses
+are in `sbs/review/`. Clear all outputs before committing it (a test checks this), since outputs
+contain README text.
+
+```powershell
+.\.venv\Scripts\python -m jupyter lab notebooks/corpus_review.ipynb
+```
 
 ### Frozen test set (`corpus/split.py`)
 

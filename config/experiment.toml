@@ -16,6 +16,8 @@ seed = 20261126
 
 [paths]
 test_set = "data/test_set.json"
+manual_labels = "data/manual/labels.csv"
+manual_exclude = "data/manual/exclude.csv"
 
 [crawler.domain]
 target_per_domain = 20000

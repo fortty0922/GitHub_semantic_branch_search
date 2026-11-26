@@ -80,9 +80,11 @@ def near_groups(docs: dict[int, list[str]], cfg: dict) -> list[list[int]]:
     return list(groups.values())
 
 
-def run(store: Store, cfg: dict) -> dict[str, int]:
+def run(store: Store, cfg: dict, excluded: dict[int, str] | None = None) -> dict[str, int]:
     stars = dict(store.db.execute("SELECT id, COALESCE(stars, 0) FROM repos"))
-    result: dict[int, tuple[str, int | None]] = {i: (s, None) for i, s in flagged(store).items()}
+    result: dict[int, tuple[str, int | None]] = {i: ("excluded", None) for i in excluded or {} if i in stars}
+    for repo_id, status in flagged(store).items():
+        result.setdefault(repo_id, (status, None))
     docs = {}
     for repo_id, text, n_tokens in store.iter_rows("SELECT repo_id, text, n_tokens FROM tokens"):
         if repo_id in result:

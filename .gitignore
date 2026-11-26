@@ -10,3 +10,4 @@ logs/
 data/*
 !data/test_set.json
 !data/test_set.sha256
+!data/manual/
