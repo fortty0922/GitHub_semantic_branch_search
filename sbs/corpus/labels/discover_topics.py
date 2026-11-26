@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 
 from sbs.common.store import Store
-from sbs.corpus.labels import discovery, topic_map_file
+from sbs.corpus.labels import discovery, topic_collapse, topic_map_file
 
 log = logging.getLogger("sbs")
 
@@ -22,8 +22,11 @@ def run(store: Store, settings: dict) -> dict[str, int]:
     """Grow the seed topics of domains.toml over the repositories of the database and write
     topic_map.toml in the config directory. Meant for a database from a general (non-domain) crawl."""
     seeds = {d: e["seed_topics"] for d, e in settings["domains"].items()}
+    cfg = settings["experiment"]["corpus"]["topics"]
     repos = discovery.topic_sets(t for (t,) in store.iter_rows(background_sql(store)))
-    found = discovery.discover(repos, seeds, settings["experiment"]["corpus"]["topics"])
+    repos, collapsed = topic_collapse.collapse_near(repos, cfg)
+    log.info("discover-topics: %d near-identical topic lists collapsed", collapsed)
+    found = discovery.discover(repos, seeds, cfg)
     store.reset("topic_discovery")
     store.replace_all("topic_discovery", ("topic", "domain", "round", "count", "assoc", "lift", "seed_assoc"),
                       ((t, e["domain"], e["round"], e["count"], e["assoc"], e["lift"], e["seed_assoc"])

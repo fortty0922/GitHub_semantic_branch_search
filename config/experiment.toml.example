@@ -7,6 +7,9 @@ min_margin = 2.0
 min_seed_assoc = 0.05
 max_new_per_round = 100
 max_rounds = 3
+collapse_min_topics = 5
+collapse_threshold = 0.7
+collapse_num_perm = 64
 
 [corpus.clean]
 inline_code_max_words = 3

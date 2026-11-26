@@ -12,3 +12,4 @@ data/*
 !data/test_set.sha256
 !data/manual/
 config/*.toml
+report/

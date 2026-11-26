@@ -23,10 +23,14 @@ the repositories of a database built by a general (non-domain) crawl, which serv
 background sample. When the corpus stage has run on that database, only repositories that dedup
 kept are used: spam campaigns, template copies and non-English repositories otherwise inflate the
 topics they share (one run pulled Roblox-script and Windows-tweak topics into computer graphics).
-Identical multi-topic lists also count once: spam campaigns publish hundreds of repositories with
-the same topic list, including a seed such as `vulkan`, and their topics would otherwise look
-strongly associated with the seed from the first round on; the seed anchor below cannot catch
-that, since in the first round the current topics are the seeds. In each round, an unassigned topic that occurs in between `min_count`
+Identical multi-topic lists count once, and so do near-identical long lists
+(`corpus/labels/topic_collapse.py`): among lists with at least `collapse_min_topics` topics, a list
+whose Jaccard similarity to an already kept list reaches `collapse_threshold` (MinHash LSH with
+`collapse_num_perm` permutations) is dropped. Spam campaigns publish hundreds of repositories with
+slightly varied copies of one long topic list that includes a seed such as `vulkan`, with READMEs
+different enough to pass dedup; their topics would otherwise look strongly associated with the
+seed from the first round on, which the seed anchor below cannot catch, since in the first round
+the current topics are the seeds. In each round, an unassigned topic that occurs in between `min_count`
 repositories and a `max_df` share of all repositories (very common topics such as `python` are
 never candidates) joins domain D when, among the repositories carrying it, the share that also
 carries one of D's current topics (assoc) is

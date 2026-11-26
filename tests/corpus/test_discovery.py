@@ -6,7 +6,8 @@ from tests.corpus.conftest import add_repo
 
 SEEDS = {"ml": ["machine-learning"], "ops": ["devops"]}
 CFG = {"min_count": 3, "max_df": 0.3, "min_assoc": 0.5, "min_lift": 2.0, "min_margin": 2.0,
-       "max_new_per_round": 10, "max_rounds": 3, "min_seed_assoc": 0.0}
+       "max_new_per_round": 10, "max_rounds": 3, "min_seed_assoc": 0.0,
+       "collapse_min_topics": 5, "collapse_threshold": 0.7, "collapse_num_perm": 64}
 
 
 def sets(*rows):

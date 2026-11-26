@@ -52,6 +52,7 @@ sbs/
     awesome_fetch.py      fetch the READMEs of the configured awesome-lists (network)
     labels/
       discovery.py        grow seed topics into topic sets by co-occurrence
+      topic_collapse.py   collapse near-identical topic lists (spam campaigns) before discovery
       discover_topics.py  discover-topics step: background database → topic_map.toml
       topic_map_file.py   writes topic_map.toml
       topics.py           topic → domain by majority vote
