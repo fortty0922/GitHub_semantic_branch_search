@@ -16,10 +16,20 @@ CREATE TABLE IF NOT EXISTS repos (
     created_at TEXT,
     pushed_at TEXT,
     fetched_at INTEGER,
+    fork INTEGER,
+    is_template INTEGER,
+    archived INTEGER,
     readme_status TEXT NOT NULL DEFAULT 'pending',
     readme TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_readme_queue ON repos (readme_status, stars DESC, created_at DESC);
+CREATE TABLE IF NOT EXISTS repo_domains (
+    repo_id INTEGER NOT NULL,
+    domain TEXT NOT NULL,
+    query TEXT NOT NULL,
+    PRIMARY KEY (repo_id, domain, query)
+);
+CREATE INDEX IF NOT EXISTS idx_repo_domains_domain ON repo_domains (domain, repo_id);
 CREATE TABLE IF NOT EXISTS crawl_state (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -28,9 +38,11 @@ CREATE TABLE IF NOT EXISTS crawl_state (
 
 UPSERT = """
 INSERT INTO repos (id, full_name, description, language, topics, stars, forks,
-                   default_branch, html_url, created_at, pushed_at, fetched_at)
+                   default_branch, html_url, created_at, pushed_at, fetched_at,
+                   fork, is_template, archived)
 VALUES (:id, :full_name, :description, :language, :topics, :stars, :forks,
-        :default_branch, :html_url, :created_at, :pushed_at, :fetched_at)
+        :default_branch, :html_url, :created_at, :pushed_at, :fetched_at,
+        :fork, :is_template, :archived)
 ON CONFLICT(id) DO UPDATE SET
     full_name = excluded.full_name,
     description = excluded.description,
@@ -41,8 +53,17 @@ ON CONFLICT(id) DO UPDATE SET
     default_branch = excluded.default_branch,
     html_url = excluded.html_url,
     pushed_at = excluded.pushed_at,
-    fetched_at = excluded.fetched_at
+    fetched_at = excluded.fetched_at,
+    fork = COALESCE(excluded.fork, repos.fork),
+    is_template = COALESCE(excluded.is_template, repos.is_template),
+    archived = COALESCE(excluded.archived, repos.archived)
 """
+
+FLAG_COLUMNS = ("fork", "is_template", "archived")
+
+
+def flag(item: dict, name: str) -> int | None:
+    return int(bool(item[name])) if item.get(name) is not None else None
 
 
 def repo_row(item: dict, now: int) -> dict:
@@ -59,6 +80,7 @@ def repo_row(item: dict, now: int) -> dict:
         "created_at": item.get("created_at"),
         "pushed_at": item.get("pushed_at"),
         "fetched_at": now,
+        **{name: flag(item, name) for name in FLAG_COLUMNS},
     }
 
 
@@ -68,11 +90,19 @@ class Storage:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=NORMAL")
         self.db.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(repos)")}
+        with self.db:
+            for name in FLAG_COLUMNS:
+                if name not in columns:
+                    self.db.execute(f"ALTER TABLE repos ADD COLUMN {name} INTEGER")
 
     def close(self) -> None:
         self.db.close()
 
-    def upsert_repos(self, items: list[dict]) -> int:
+    def upsert_repos(self, items: list[dict], domain: str | None = None, query: str | None = None) -> int:
         if not items:
             return 0
         ids = [i["id"] for i in items]
@@ -81,7 +111,15 @@ class Storage:
         now = int(time.time())
         with self.db:
             self.db.executemany(UPSERT, [repo_row(i, now) for i in items])
+            if domain is not None:
+                self.db.executemany(
+                    "INSERT OR IGNORE INTO repo_domains (repo_id, domain, query) VALUES (?, ?, ?)",
+                    [(i["id"], domain, query or "") for i in items],
+                )
         return len(set(ids)) - known
+
+    def domain_counts(self) -> dict[str, int]:
+        return dict(self.db.execute("SELECT domain, COUNT(DISTINCT repo_id) FROM repo_domains GROUP BY domain"))
 
     def get_state(self, key: str):
         row = self.db.execute("SELECT value FROM crawl_state WHERE key = ?", (key,)).fetchone()

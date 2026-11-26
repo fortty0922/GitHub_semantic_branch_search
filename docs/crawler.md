@@ -37,6 +37,24 @@ When the time budget ends (or on Ctrl+C) all tasks are cancelled, READMEs claime
 fetched are returned to `pending`, and a session summary is logged. The next `run` continues
 from the saved cursors.
 
+### Domain mode
+
+```powershell
+.\.venv\Scripts\python -m crawler --domain-mode run --hours 2
+.\.venv\Scripts\python -m crawler --domain-mode check
+```
+
+`--domain-mode` (and `--config`, default `config`) are global options, placed before the
+subcommand. Instead of the plain star tiers, discovery runs every query of `config/domains.toml`
+combined with each star tier (`<query> stars:<range> created:<window> fork:true`). Each
+domain/query/tier combination has its own cursors in `crawl_state`, so it resumes like a normal
+crawl and does not touch the cursors of a plain crawl in the same database. A domain stops being
+searched once `repo_domains` holds `crawler.domain.target_per_domain` (in
+`config/experiment.toml`) distinct repositories for it; reaching the target is logged once.
+README fetching is the same as in a plain crawl. With `--domain-mode`, `check` also reports
+repositories per domain against the target, and a domain that reached its target counts as
+complete even if its sweeps are not finished.
+
 ### Completeness check and fill
 
 ```powershell
@@ -203,8 +221,11 @@ requested. READMEs claimed by a worker are marked `queued` and reset to `pending
 ## Schema
 
 - `repos(id, full_name, description, language, topics JSON, stars, forks, default_branch,
-  html_url, created_at, pushed_at, fetched_at, readme_status, readme)`
-  — `readme_status` is `pending | rest | queued | ok | none | error`.
+  html_url, created_at, pushed_at, fetched_at, fork, is_template, archived, readme_status, readme)`
+  — `readme_status` is `pending | rest | queued | ok | none | error`; `fork`, `is_template`,
+  `archived` are 0/1, NULL for rows stored before these columns existed (added automatically when
+  an older database is opened).
+- `repo_domains(repo_id, domain, query)` — which domain query found each repository (domain mode).
 - `crawl_state(key, value JSON)`.
 
 ## Known limits

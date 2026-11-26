@@ -42,17 +42,34 @@ def tier_report(storage: Storage, tier: Tier, now: float) -> dict:
     }
 
 
-def report(storage: Storage, tiers: tuple[Tier, ...] = DEFAULT_TIERS, now: float | None = None) -> dict:
+def domain_report(storage: Storage, tiers: tuple[Tier, ...], target: int) -> dict:
+    counts = storage.domain_counts()
+    names = dict.fromkeys(t.domain for t in tiers if t.domain is not None)
+    return {d: {"repos": counts.get(d, 0), "target": target, "reached": counts.get(d, 0) >= target} for d in names}
+
+
+def report(storage: Storage, tiers: tuple[Tier, ...] = DEFAULT_TIERS, now: float | None = None,
+           domain_target: int | None = None) -> dict:
+    """A domain tier counts as finished once its domain has reached `domain_target`."""
     now = time.time() if now is None else now
     readme = readme_report(storage)
     fields = field_report(storage)
+    domains = domain_report(storage, tiers, domain_target) if domain_target is not None else {}
     tier_states = {t.key: tier_report(storage, t, now) for t in tiers}
+    tiers_done = all(
+        (s["sweep_done"] and not s["open_gap"]) or domains.get(t.domain, {}).get("reached", False)
+        for t, s in zip(tiers, tier_states.values())
+    )
     complete = (
         readme["incomplete"] == 0
         and readme["failed"] == 0
         and readme["ok_without_text"] == 0
         and not any(fields.values())
-        and all(s["sweep_done"] and not s["open_gap"] for s in tier_states.values())
+        and tiers_done
     )
     total = storage.db.execute("SELECT COUNT(*) FROM repos").fetchone()[0]
-    return {"complete": complete, "repos": total, "readme": readme, "missing_fields": fields, "tiers": tier_states}
+    result = {"complete": complete, "repos": total, "readme": readme, "missing_fields": fields}
+    if domain_target is not None:
+        result["domains"] = domains
+    result["tiers"] = tier_states
+    return result

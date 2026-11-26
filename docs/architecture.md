@@ -30,7 +30,7 @@ GitHub API ──crawler──▶ repos (SQLite)
 ## Layout
 
 ```
-crawler/                  GitHub crawler (existing), extended with a domain mode
+crawler/                  GitHub crawler; domains.py builds the domain-mode tiers
 
 config/
   experiment.toml         every scale and threshold parameter

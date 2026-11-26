@@ -9,8 +9,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from . import domains
 from .check import report
-from .crawl import Config, Crawler
+from .crawl import DEFAULT_TIERS, Config, Crawler
 from .storage import Storage
 
 
@@ -25,9 +26,17 @@ def add_session_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--log-dir", default="logs", help="directory for the summary log file")
 
 
-def print_check(db: str) -> bool:
-    storage = Storage(db)
-    result = report(storage)
+def tier_setup(args) -> tuple[tuple, int | None]:
+    if not args.domain_mode:
+        return DEFAULT_TIERS, None
+    queries, target = domains.load(args.config)
+    return domains.domain_tiers(queries), target
+
+
+def print_check(args) -> bool:
+    tiers, target = tier_setup(args)
+    storage = Storage(args.db)
+    result = report(storage, tiers, domain_target=target)
     storage.close()
     print(json.dumps(result, indent=2))
     return result["complete"]
@@ -36,6 +45,9 @@ def print_check(db: str) -> bool:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m crawler")
     parser.add_argument("--db", default="crawler.db")
+    parser.add_argument("--domain-mode", action="store_true",
+                        help="crawl the domain queries of config/domains.toml up to the per-domain target")
+    parser.add_argument("--config", default="config", help="directory with domains.toml and experiment.toml")
     sub = parser.add_subparsers(dest="cmd", required=True)
     run = sub.add_parser("run", help="crawl until the time budget is used (or Ctrl+C)")
     add_session_options(run)
@@ -53,7 +65,7 @@ def main() -> None:
         storage.close()
         return
     if args.cmd == "check":
-        sys.exit(0 if print_check(args.db) else 1)
+        sys.exit(0 if print_check(args) else 1)
 
     load_dotenv()
     token = os.environ.get("GITHUB_TOKEN")
@@ -64,6 +76,7 @@ def main() -> None:
     duration = args.hours * 3600 if args.hours else args.minutes * 60 if args.minutes else None
     cfg = Config(token=token, db_path=args.db, duration=duration, workers=args.workers,
                  graphql_workers=args.graphql_workers, batch_size=args.batch, reserve_ratio=args.reserve)
+    cfg.tiers, cfg.domain_target = tier_setup(args)
     if args.cmd == "run":
         cfg.max_backlog = args.max_backlog
     else:
@@ -81,7 +94,7 @@ def main() -> None:
         log.exception("crawler stopped by an unhandled error")
         sys.exit(1)
     if args.cmd == "fill":
-        sys.exit(0 if print_check(args.db) else 1)
+        sys.exit(0 if print_check(args) else 1)
 
 
 class SummaryFilter(logging.Filter):

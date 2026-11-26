@@ -32,16 +32,21 @@ MAX_SPAN = 2 * 365 * 86400
 class Tier:
     lo: int
     hi: int | None
+    qualifier: str = ""
+    domain: str | None = None
 
     @property
     def key(self) -> str:
-        return f"tier:{self.lo}+" if self.hi is None else f"tier:{self.lo}-{self.hi}"
+        base = f"tier:{self.lo}+" if self.hi is None else f"tier:{self.lo}-{self.hi}"
+        return base if self.domain is None else f"domain:{self.domain}:{self.qualifier}:{base}"
 
     @property
     def query(self) -> str:
         if self.hi is None:
-            return f"stars:>={self.lo}"
-        return f"stars:{self.lo}" if self.lo == self.hi else f"stars:{self.lo}..{self.hi}"
+            stars = f"stars:>={self.lo}"
+        else:
+            stars = f"stars:{self.lo}" if self.lo == self.hi else f"stars:{self.lo}..{self.hi}"
+        return f"{self.qualifier} {stars}" if self.qualifier else stars
 
 
 DEFAULT_TIERS = (Tier(1000, None), Tier(100, 999), Tier(10, 99), Tier(1, 9), Tier(0, 0))
@@ -62,6 +67,7 @@ class Config:
     discover: bool = True
     stop_when_done: bool = False
     done_check_every: float = 5
+    domain_target: int | None = None
 
 
 def iso(ts: int) -> str:
@@ -131,6 +137,7 @@ class Crawler:
         self.paused_total = 0.0
         self.graphql_streak = 0
         self._prefetch: dict[tuple, tuple[asyncio.Task, asyncio.Future]] = {}
+        self.reported_full: set[str] = set()
 
     # ---- discovery (search bucket) ----
 
@@ -192,15 +199,27 @@ class Crawler:
             self._prefetch[(tier.key, start, floor)] = self.window_task(tier, start, floor, state["span"])
 
         for page in await task:
-            self.new_repos += self.storage.upsert_repos(page["items"])
+            self.new_repos += self.storage.upsert_repos(page["items"], tier.domain, tier.qualifier)
         self.events["windows"] += 1
         log.info("%s %s..%s: %d repos", tier.key, iso(start), iso(end), total)
         return start
 
+    def full_domains(self) -> set[str]:
+        if self.cfg.domain_target is None:
+            return set()
+        full = {d for d, n in self.storage.domain_counts().items() if n >= self.cfg.domain_target}
+        for domain in sorted(full - self.reported_full):
+            log.info("domain %s reached its target of %d repos", domain, self.cfg.domain_target, extra=SUMMARY)
+        self.reported_full |= full
+        return full
+
     async def step(self) -> bool:
         """Advance the highest-priority unfinished cursor by one window. False when all caught up."""
         now = int(time.time()) - INDEX_LAG
+        full = self.full_domains()
         for tier in self.cfg.tiers:
+            if tier.domain in full:
+                continue
             state = self.storage.get_state(tier.key) or {"upper": now, "lower": now}
             if "gap_top" not in state and now - state["upper"] >= GAP_MIN:
                 state["gap_top"] = state["gap_cursor"] = now
@@ -380,7 +399,8 @@ class Crawler:
         await self.client.init_limits()
         log.info("session start: mode=%s duration=%ss workers=%d graphql_workers=%d batch=%d (max %d) "
                  "max_backlog=%d db_repos=%d quotas=%s",
-                 "crawl" if self.cfg.discover else "fill", self.cfg.duration, self.cfg.workers, self.cfg.graphql_workers, self.batch_size, self.batch_max,
+                 ("domain crawl" if self.cfg.domain_target is not None else "crawl") if self.cfg.discover else "fill",
+                 self.cfg.duration, self.cfg.workers, self.cfg.graphql_workers, self.batch_size, self.batch_max,
                  self.cfg.max_backlog,
                  self.storage.stats()["repos"],
                  {n: l.remaining for n, l in self.client.limiters.items()}, extra=SUMMARY)

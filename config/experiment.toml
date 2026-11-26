@@ -16,3 +16,6 @@ seed = 20261126
 
 [paths]
 test_set = "data/test_set.json"
+
+[crawler.domain]
+target_per_domain = 20000

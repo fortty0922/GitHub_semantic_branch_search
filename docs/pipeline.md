@@ -9,7 +9,9 @@ number referred to here as a parameter is set in `config/experiment.toml`.
 
 The initial domains are machine learning, DevOps, data engineering, web backend, computer
 graphics and operating systems; the list and the queries for each domain are in
-`config/domains.toml`, and the target number of repositories per domain is a parameter.
+`config/domains.toml`, and the target number of repositories per domain is
+`crawler.domain.target_per_domain` in `config/experiment.toml`. Usage is in
+[crawler.md](crawler.md#domain-mode).
 
 The existing crawler ([crawler.md](crawler.md)) already handles rate limits, resuming, README
 fetching and the search API's cap of 1,000 results per query (star tiers × `created:` windows
@@ -17,12 +19,17 @@ halved until each fits). The domain mode adds:
 
 - `Tier.qualifier`: a domain sub-query (e.g. `topic:machine-learning`, a phrase
   `in:description`) prefixed to the star qualifier. Each domain has several sub-queries, each with
-  its own cursors in `crawl_state` (keys prefixed by domain).
-- A per-domain stop: once a domain reaches its target, its cursors are no longer advanced.
+  its own cursors in `crawl_state` (keys `domain:<domain>:<query>:tier:<stars>`). Star tiers stay
+  the outer priority; within a star tier every domain and query takes its turn.
+- A per-domain stop: once a domain has reached its target (distinct repositories in
+  `repo_domains`), its cursors are no longer advanced. The check runs before each window, so a
+  domain can overshoot by at most one window.
 - `repo_domains(repo_id, domain, query)`: which domain query found each repository. A repository
   found by several domains keeps all rows.
-- New `repos` columns `fork`, `is_template`, `archived` (returned by the search API). The fetch
-  date is the existing `fetched_at`.
+- New `repos` columns `fork`, `is_template`, `archived` (returned by the search API), stored in
+  every mode. An older database gets the columns on first open; its existing rows stay NULL until
+  they are seen by a search again, so the dedup fork/template step only covers rows that have
+  been re-fetched. The fetch date is the existing `fetched_at`.
 
 Stored per repository: README, description, topics, metadata and fetch date.
 

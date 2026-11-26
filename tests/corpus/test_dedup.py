@@ -39,6 +39,8 @@ def test_short_and_empty(store):
 
 
 def test_fork_filter_only_when_columns_exist(store):
+    for column in ("fork", "is_template", "archived"):
+        store.db.execute(f"ALTER TABLE repos DROP COLUMN {column}")
     add_repo(store, 1, BASE)
     add_repo(store, 2, OTHER)
     prepare(store)
