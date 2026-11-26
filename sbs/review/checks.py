@@ -16,16 +16,21 @@ RESIDUE = {
 }
 
 
-def residue(store: Store, examples: int = 5) -> pd.DataFrame:
+def residue(store: Store, examples: int = 5, context: int = 40) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Counts per residue kind, and example snippets around the first match in each example doc."""
     counts = {name: 0 for name in RESIDUE}
-    found: dict[str, list[int]] = {name: [] for name in RESIDUE}
+    snippets = []
     for repo_id, text in store.iter_rows("SELECT repo_id, text FROM docs_clean"):
         for name, pattern in RESIDUE.items():
-            if pattern.search(text):
-                counts[name] += 1
-                if len(found[name]) < examples:
-                    found[name].append(repo_id)
-    return pd.DataFrame({"docs": counts, "example_ids": found})
+            m = pattern.search(text)
+            if not m:
+                continue
+            counts[name] += 1
+            if counts[name] <= examples:
+                start, end = max(0, m.start() - context), m.end() + context
+                snippets.append((name, repo_id, " / ".join(text[start:end].splitlines())))
+    summary = pd.DataFrame({"docs": counts})
+    return summary, pd.DataFrame(snippets, columns=["kind", "repo_id", "context"])
 
 
 def split_summary(store: Store, path: str | Path) -> dict:

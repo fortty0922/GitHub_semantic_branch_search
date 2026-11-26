@@ -1,7 +1,7 @@
 from sbs.corpus import clean, dedup, tokens
-from tests.corpus.conftest import add_repo
+from tests.corpus.conftest import add_repo, dedup_cfg
 
-CFG = {"min_tokens": 5, "shingle_size": 3, "num_perm": 128, "threshold": 0.8}
+CFG = dedup_cfg(min_tokens=5, threshold=0.8)
 BASE = " ".join(f"word{i}" for i in range(60))
 OTHER = " ".join(f"other{i}" for i in range(60))
 
@@ -53,3 +53,25 @@ def test_fork_filter_only_when_columns_exist(store):
     dedup.run(store, CFG)
     st = statuses(store)
     assert (st[1][0], st[2][0]) == ("fork", "template")
+
+
+def test_non_english_docs_are_dropped(store):
+    add_repo(store, 1, "這是一個用於訓練神經網路的工具，支援多種模型與資料集，" * 5 + " pytorch")
+    add_repo(store, 2, BASE)
+    prepare(store)
+    st = statuses(store)
+    assert st[1][0] == "non_english" and st[2][0] == "kept"
+
+
+def test_large_groups_are_boilerplate_unless_dominated(store):
+    for i in range(1, 5):
+        add_repo(store, i, BASE, stars=100 + i)
+    add_repo(store, 10, OTHER, stars=5000)
+    for i in range(11, 14):
+        add_repo(store, i, OTHER, stars=1)
+    clean.run(store)
+    tokens.run(store)
+    dedup.run(store, dedup_cfg(max_group_size=4))
+    st = statuses(store)
+    assert all(st[i] == ("boilerplate", None) for i in range(1, 5))
+    assert st[10] == ("kept", None) and st[11] == ("exact", 10)

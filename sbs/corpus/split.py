@@ -61,7 +61,7 @@ def train_ids(store: Store, path: str | Path) -> set[int]:
 def run(store: Store, settings: dict) -> int:
     cfg = settings["experiment"]["corpus"]["split"]
     path = Path(settings["experiment"]["paths"]["test_set"])
-    ids = draw(store.labelled(), cfg["test_fraction"], cfg["seed"])
+    ids = draw(store.labelled(tuple(cfg["sources"])), cfg["test_fraction"], cfg["seed"])
     freeze(path, ids, cfg["seed"])
     log.info("split: %d test ids frozen in %s", len(ids), path)
     return len(ids)

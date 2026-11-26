@@ -8,7 +8,8 @@ STAGES = {
     "docs_clean": "SELECT COUNT(*) FROM docs_clean",
     "tokens": "SELECT COUNT(*) FROM tokens",
     "dedup kept": "SELECT COUNT(*) FROM dedup WHERE status = 'kept'",
-    "labelled": "SELECT COUNT(*) FROM labels WHERE domain != 'unknown'",
+    "labelled": "SELECT COUNT(*) FROM labels WHERE domain NOT IN ('unknown', 'other')",
+    "other": "SELECT COUNT(*) FROM labels WHERE domain = 'other'",
     "unknown": "SELECT COUNT(*) FROM labels WHERE domain = 'unknown'",
 }
 
@@ -67,6 +68,10 @@ def label_crosstab(store: Store) -> pd.DataFrame:
     if df.empty:
         return df
     return pd.crosstab(df["domain"], df["label_source"], margins=True)
+
+
+def label_thresholds(store: Store) -> pd.DataFrame:
+    return query(store, "SELECT * FROM label_thresholds ORDER BY domain").set_index("domain")
 
 
 def domain_agreement(store: Store) -> pd.DataFrame:

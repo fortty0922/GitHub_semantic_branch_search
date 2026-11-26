@@ -5,6 +5,7 @@ from collections import defaultdict
 from datasketch import LeanMinHash, MinHash, MinHashLSH
 
 from sbs.common.store import Store
+from sbs.corpus.language import english_ratio
 from sbs.corpus.tokens import deserialize
 
 log = logging.getLogger("sbs")
@@ -80,11 +81,43 @@ def near_groups(docs: dict[int, list[str]], cfg: dict) -> list[list[int]]:
     return list(groups.values())
 
 
+def non_english(store: Store, skip: dict, min_ratio: float) -> dict[int, tuple[str, None]]:
+    return {
+        repo_id: ("non_english", None)
+        for repo_id, text in store.iter_rows("SELECT repo_id, text FROM docs_clean")
+        if repo_id not in skip and english_ratio(text) < min_ratio
+    }
+
+
+def final_kept(repo_id: int, result: dict) -> int:
+    while result[repo_id][0] in ("exact", "near"):
+        repo_id = result[repo_id][1]
+    return repo_id
+
+
+def boilerplate(result: dict, stars: dict[int, int], cfg: dict) -> None:
+    """Large duplicate groups are template READMEs or spam: drop the whole group, unless the kept
+    repository clearly dominates by stars (an original with its copies)."""
+    groups = defaultdict(list)
+    for repo_id, (status, _) in result.items():
+        if status in ("exact", "near"):
+            groups[final_kept(repo_id, result)].append(repo_id)
+    for keep, members in groups.items():
+        if len(members) + 1 < cfg["max_group_size"]:
+            continue
+        runner_up = max(stars.get(i, 0) for i in members)
+        if stars.get(keep, 0) > cfg["keep_star_ratio"] * runner_up:
+            continue
+        for repo_id in (keep, *members):
+            result[repo_id] = ("boilerplate", None)
+
+
 def run(store: Store, cfg: dict, excluded: dict[int, str] | None = None) -> dict[str, int]:
     stars = dict(store.db.execute("SELECT id, COALESCE(stars, 0) FROM repos"))
     result: dict[int, tuple[str, int | None]] = {i: ("excluded", None) for i in excluded or {} if i in stars}
     for repo_id, status in flagged(store).items():
         result.setdefault(repo_id, (status, None))
+    result.update(non_english(store, result, cfg["min_english_ratio"]))
     docs = {}
     for repo_id, text, n_tokens in store.iter_rows("SELECT repo_id, text, n_tokens FROM tokens"):
         if repo_id in result:
@@ -105,6 +138,7 @@ def run(store: Store, cfg: dict, excluded: dict[int, str] | None = None) -> dict
     resolve(near_groups(remaining, cfg), stars, "near", result)
     for repo_id in docs:
         result.setdefault(repo_id, ("kept", None))
+    boilerplate(result, stars, cfg)
 
     store.replace_all("dedup", ("repo_id", "status", "kept_id"),
                       ((i, s, k) for i, (s, k) in sorted(result.items())))

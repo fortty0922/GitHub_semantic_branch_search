@@ -1,9 +1,9 @@
 from sbs.corpus import clean, dedup, manual, tokens
 from sbs.corpus.labels import assign
-from tests.corpus.conftest import add_repo
-from tests.corpus.test_labels import LABEL_CFG, ML, OPS, TOPIC_MAP, doc
+from tests.corpus.conftest import LABEL_CFG, add_repo, dedup_cfg
+from tests.corpus.test_labels import ML, OPS, TOPIC_MAP, doc
 
-DEDUP = {"min_tokens": 1, "shingle_size": 3, "num_perm": 128, "threshold": 0.9}
+DEDUP = dedup_cfg()
 
 
 def test_round_trip(tmp_path):

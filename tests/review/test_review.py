@@ -1,8 +1,8 @@
 from sbs.corpus import clean, dedup, split, tokens
 from sbs.corpus.labels import assign
 from sbs.review import checks, frames
-from tests.corpus.conftest import add_repo
-from tests.corpus.test_labels import LABEL_CFG, ML, OPS, TOPIC_MAP, doc
+from tests.corpus.conftest import LABEL_CFG, add_repo, dedup_cfg
+from tests.corpus.test_labels import ML, OPS, TOPIC_MAP, doc
 
 
 def build(store):
@@ -14,7 +14,7 @@ def build(store):
     store.upsert_awesome("a/ml", "machine-learning", "github.com/o/r1 github.com/missing/repo", 0)
     clean.run(store)
     tokens.run(store)
-    dedup.run(store, {"min_tokens": 1, "shingle_size": 3, "num_perm": 128, "threshold": 0.9})
+    dedup.run(store, dedup_cfg())
     assign.run(store, {"topic_map": TOPIC_MAP, "experiment": {"corpus": {"labels": LABEL_CFG}}})
 
 
@@ -35,12 +35,13 @@ def test_frames(store):
 
 def test_checks(store, tmp_path):
     build(store)
-    residue = checks.residue(store)
-    assert residue.loc["table_pipe", "docs"] == 0 and residue.loc["url", "docs"] == 0
+    residue, snippets = checks.residue(store)
+    assert residue.loc["table_pipe", "docs"] == 0 and snippets.empty
     store.db.execute("UPDATE docs_clean SET text = 'left | over https://x' WHERE repo_id = 31")
     store.db.commit()
-    residue = checks.residue(store)
-    assert residue.loc["table_pipe", "example_ids"] == [31] and residue.loc["url", "docs"] == 1
+    residue, snippets = checks.residue(store, context=5)
+    assert residue.loc["url", "docs"] == 1
+    assert snippets.set_index("kind").loc["table_pipe"].tolist() == [31, "left | over"]
     path = tmp_path / "test_set.json"
     assert checks.split_summary(store, path) == {"frozen": False}
     split.freeze(path, [1, 11], seed=0)

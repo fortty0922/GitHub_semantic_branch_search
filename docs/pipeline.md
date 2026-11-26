@@ -71,13 +71,23 @@ Each repository gets one `dedup.status`, decided in this order:
 0. `excluded`: listed in the manual exclusion file (see [Manual overrides](#manual-overrides-corpusmanualpy)).
 1. `fork` / `template`: repositories flagged `fork` or `is_template`. The step runs only when
    those columns exist in `repos`; a database from the original crawler schema skips it and logs that.
-2. `empty` (no tokens) and `short` (fewer than `min_tokens` tokens).
-3. `exact`: same SHA-256 of the token sequence.
-4. `near` (template-generated READMEs): MinHash LSH over word shingles of `shingle_size` with
-   `num_perm` permutations, Jaccard `threshold`; candidate pairs are merged transitively into groups.
+2. `non_english`: the share of ASCII letters among all letters of the cleaned README is below
+   `min_english_ratio` (the tokenizer only keeps English, so such READMEs lose most of their text).
+3. `empty` (no tokens) and `short` (fewer than `min_tokens` tokens).
+4. `exact`: same SHA-256 of the token sequence.
+5. `near`: MinHash LSH over word shingles of `shingle_size` with `num_perm` permutations, Jaccard
+   `threshold`; candidate pairs are merged transitively into groups.
 
 Within each duplicate group the repository with the most stars is `kept` (ties: lowest id), and
-the others point to it through `kept_id`. Later stages read only `kept` repositories.
+the others point to it through `kept_id`.
+
+6. `boilerplate`: a duplicate group (exact and near combined) with at least `max_group_size`
+   repositories is a template README (e.g. a framework's generated README) or spam, so the whole
+   group, kept repository included, is dropped. The exception is a group whose kept repository has
+   more than `keep_star_ratio` times the stars of any other member: an original with its copies,
+   where the original stays `kept`.
+
+Later stages read only `kept` repositories.
 
 ### Domain labels (`corpus/labels/`)
 
@@ -89,12 +99,26 @@ Applied in order to `kept` repositories, first match wins (a manual label, if an
    `config/awesome_lists.toml` in `awesome_lists`; GitHub repository links are parsed from them
    (case-insensitive, the list itself excluded). A repository linked from lists of more than one
    domain gets no label from this source.
-3. **Text classifier** (`classifier.py`): TF-IDF + logistic regression trained on repositories
-   labelled by 1–2, over description, topics and README tokens; predictions below `min_confidence`
-   are labelled `unknown` and excluded.
+3. **Text classifier** (`classifier.py`, `threshold.py`): TF-IDF + logistic regression (balanced
+   class weights) over description, topics and README tokens. Training classes are the domains,
+   from the repositories labelled by the manual file and 1–2, plus `other`: repositories with at
+   least `other_min_topics` topics of which none is in `topic_map.toml`. A class with fewer
+   examples than `cv_folds` is not trained (logged).
 
-`label_source` (`topic`, `awesome`, `model`) and, for `model`, the predicted probability
-(`confidence`) are stored so the audit can report accuracy per source.
+   Acceptance thresholds are chosen automatically: `cv_folds`-fold cross-validated probabilities
+   on the training set give, per domain, the lowest confidence at which predictions of that domain
+   reach `target_precision` with at least `min_support` predictions. They are stored in
+   `label_thresholds` (`threshold` is NULL when the target is never reached, so the model never
+   assigns that domain). The model, refitted on the whole training set, then labels the remaining
+   repositories: a predicted domain at or above its threshold is kept, `other` is kept as is, and
+   everything else is `unknown`.
+
+`other` and `unknown` repositories are not in the labelled set. The cross-validated precision is
+measured on repositories that have topics or are in awesome-lists, which are usually easier than
+the rest, so it is an optimistic estimate; the label audit reports the real accuracy.
+
+`label_source` (`topic`, `awesome`, `manual`, `model`) and, for `model`, the predicted
+probability (`confidence`) are stored so the audit can report accuracy per source.
 
 ### Manual overrides (`corpus/manual.py`)
 
@@ -111,6 +135,7 @@ corpus can be rebuilt with the same decisions:
 `dedup` and `label` read the files on every run, so overrides survive re-runs. The frozen test set
 is never redrawn: an override on a test repository changes its label (or removes it from the
 labelled set) as evaluation will read it, and `train_ids()` follows the current labels.
+`other` can be used like a domain in the labels file.
 
 ### Review notebook (`notebooks/corpus_review.ipynb`)
 
@@ -129,7 +154,9 @@ contain README text.
 
 ### Frozen test set (`corpus/split.py`)
 
-Stratified by domain over `kept` repositories with a known label: within each domain the sorted
+Stratified by domain over `kept` repositories whose label comes from one of the configured
+`sources` (by default not `model`, so relevance judgements in evaluation do not rest on classifier
+guesses): within each domain the sorted
 ids are shuffled with `seed` and the first `test_fraction` (rounded) are taken. The ids, seed and
 creation date are written to the `paths.test_set` file together with a `.sha256` file of its
 contents; both are committed. `test_ids()` refuses a file whose hash does not match, and

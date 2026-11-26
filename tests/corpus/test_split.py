@@ -28,18 +28,20 @@ def test_freeze_refuses_overwrite_and_detects_tampering(tmp_path):
 
 
 def test_run_train_and_test_disjoint(store, tmp_path):
+    model = {200 + i: "a" for i in range(50)}
     store.replace_all("dedup", ("repo_id", "status", "kept_id"),
-                      [(i, "kept", None) for i in LABELLED] + [(999, "exact", 1)])
+                      [(i, "kept", None) for i in [*LABELLED, *model, 500, 501]] + [(999, "exact", 1)])
     store.replace_all("labels", ("repo_id", "domain", "label_source", "confidence"),
                       [(i, d, "topic", None) for i, d in LABELLED.items()]
-                      + [(500, "unknown", "model", 0.1), (999, "a", "topic", None)])
+                      + [(i, d, "model", 0.95) for i, d in model.items()]
+                      + [(500, "unknown", "model", 0.1), (501, "other", "model", 0.9), (999, "a", "topic", None)])
     path = tmp_path / "test_set.json"
-    settings = {"experiment": {"corpus": {"split": {"test_fraction": 0.1, "seed": 1}},
+    settings = {"experiment": {"corpus": {"split": {"test_fraction": 0.1, "seed": 1, "sources": ["topic"]}},
                                "paths": {"test_set": str(path)}}}
     assert split.run(store, settings) == 10
     test, train = split.test_ids(path), split.train_ids(store, path)
-    assert not test & train
-    assert test | train == set(LABELLED)
+    assert not test & train and not test & set(model)
+    assert test | train == set(LABELLED) | set(model)
 
 
 @pytest.mark.skipif(not COMMITTED.exists(), reason="test set not frozen yet")

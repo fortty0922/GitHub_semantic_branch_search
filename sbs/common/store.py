@@ -22,6 +22,12 @@ CREATE TABLE IF NOT EXISTS awesome_lists (
     readme TEXT NOT NULL,
     fetched_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS label_thresholds (
+    domain TEXT PRIMARY KEY,
+    threshold REAL,
+    cv_precision REAL,
+    cv_support INTEGER
+);
 CREATE TABLE IF NOT EXISTS labels (
     repo_id INTEGER PRIMARY KEY,
     domain TEXT NOT NULL,
@@ -80,8 +86,10 @@ class Store:
     def kept_ids(self) -> list[int]:
         return [r[0] for r in self.db.execute("SELECT repo_id FROM dedup WHERE status = 'kept' ORDER BY repo_id")]
 
-    def labelled(self) -> dict[int, str]:
-        return dict(self.db.execute(
-            "SELECT l.repo_id, l.domain FROM labels l JOIN dedup d ON d.repo_id = l.repo_id "
-            "WHERE d.status = 'kept' AND l.domain != 'unknown'"
-        ))
+    def labelled(self, sources: tuple[str, ...] | None = None) -> dict[int, str]:
+        sql = ("SELECT l.repo_id, l.domain FROM labels l JOIN dedup d ON d.repo_id = l.repo_id "
+               "WHERE d.status = 'kept' AND l.domain NOT IN ('unknown', 'other')")
+        if sources is None:
+            return dict(self.db.execute(sql))
+        marks = ",".join("?" * len(sources))
+        return dict(self.db.execute(f"{sql} AND l.label_source IN ({marks})", sources))
