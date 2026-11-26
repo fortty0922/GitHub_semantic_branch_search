@@ -91,3 +91,5 @@ def test_queries_from_topic_map_then_extra():
     q = domains.queries(doms, topic_map, max_topics=2)
     assert q["ml"] == ["topic:pytorch", "topic:machine-learning", "\"machine learning\" in:description"]
     assert q["os"] == ["topic:operating-system"]
+    topic_map["ml"]["query_topics"] = ["pytorch"]
+    assert domains.queries(doms, topic_map, max_topics=2)["ml"] == ["topic:pytorch", "\"machine learning\" in:description"]

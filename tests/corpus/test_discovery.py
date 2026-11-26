@@ -7,7 +7,7 @@ from tests.corpus.conftest import add_repo
 SEEDS = {"ml": ["machine-learning"], "ops": ["devops"]}
 CFG = {"min_count": 3, "max_df": 0.3, "min_assoc": 0.5, "min_lift": 2.0, "min_margin": 2.0,
        "max_new_per_round": 10, "max_rounds": 3, "min_seed_assoc": 0.0,
-       "collapse_min_topics": 5, "collapse_threshold": 0.7, "collapse_num_perm": 64}
+       "collapse_min_topics": 5, "collapse_threshold": 0.7, "collapse_num_perm": 64, "max_query_round": 1}
 
 
 def sets(*rows):
@@ -34,6 +34,7 @@ def test_discovery_grows_from_seeds_in_rounds():
     assert (found["helm"]["domain"], found["helm"]["round"]) == ("ops", 2)
     assert {"python", "rare", "misc", "web"}.isdisjoint(found)
     assert discovery.by_domain(found, ["ml", "ops"])["ml"] == ["pytorch", "machine-learning", "torchvision"]
+    assert discovery.by_domain(found, ["ml", "ops"], max_round=1)["ml"] == ["pytorch", "machine-learning"]
 
 
 def test_seed_anchor_stops_drifting_chains():
@@ -68,6 +69,8 @@ def test_written_topic_map_round_trips(tmp_path):
     topic_map_file.write(path, {"ml": ["pytorch", 'odd"name'], "ops": []})
     assert tomllib.loads(path.read_text(encoding="utf-8")) == {
         "ml": {"topics": ["pytorch", 'odd"name']}, "ops": {"topics": []}}
+    topic_map_file.write(path, {"ml": ["pytorch", "cuda"]}, {"ml": ["pytorch"]})
+    assert tomllib.loads(path.read_text(encoding="utf-8")) == {"ml": {"topics": ["pytorch", "cuda"], "query_topics": ["pytorch"]}}
 
 
 def test_run_writes_topic_map_into_config_dir(store, example_config):
@@ -94,7 +97,10 @@ def test_run_writes_topic_map_into_config_dir(store, example_config):
                       + [(i, "boilerplate", None) for i in range(50, 60)])
     discover_topics.run(store, settings)
     written = tomllib.loads((config / "topic_map.toml").read_text(encoding="utf-8"))
-    assert written == {"ml": {"topics": ["pytorch", "machine-learning", "cuda"]}, "ops": {"topics": ["devops"]}}
+    assert written == {
+        "ml": {"topics": ["pytorch", "machine-learning", "cuda"], "query_topics": ["pytorch", "machine-learning"]},
+        "ops": {"topics": ["devops"], "query_topics": ["devops"]},
+    }
     assert store.db.execute("SELECT COUNT(*) FROM topic_discovery").fetchone()[0] == 4
     store.reset("topic_discovery")
     assert store.has_column("topic_discovery", "lift")

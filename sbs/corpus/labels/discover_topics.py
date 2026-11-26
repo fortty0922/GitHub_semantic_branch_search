@@ -32,9 +32,10 @@ def run(store: Store, settings: dict) -> dict[str, int]:
                       ((t, e["domain"], e["round"], e["count"], e["assoc"], e["lift"], e["seed_assoc"])
                        for t, e in sorted(found.items())))
     topics = discovery.by_domain(found, list(seeds))
+    query_topics = discovery.by_domain(found, list(seeds), cfg["max_query_round"])
     path = Path(settings["config_dir"]) / "topic_map.toml"
-    topic_map_file.write(path, topics)
+    topic_map_file.write(path, topics, query_topics)
     counts = {d: len(ts) for d, ts in topics.items()}
-    log.info("discover-topics: %d repositories with topics, topics per domain %s, written to %s",
-             len(repos), counts, path)
+    log.info("discover-topics: %d repositories with topics, topics per domain %s, query topics %s, written to %s",
+             len(repos), counts, {d: len(ts) for d, ts in query_topics.items()}, path)
     return counts

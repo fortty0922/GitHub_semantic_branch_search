@@ -12,7 +12,8 @@ graphics and operating systems. `config/domains.toml` lists them with one or a f
 each and optional extra (non-topic) queries; the topics themselves are not written by hand but
 discovered from data (see [Topic discovery](#topic-discovery-corpuslabelsdiscoverypy)) into
 `config/topic_map.toml`. The domain mode searches `topic:<t>` for the `max_topic_queries` most
-frequent topics of each domain, then the extra queries. The target number of repositories per
+frequent *query topics* of each domain (topics discovered by round `max_query_round`, see below),
+then the extra queries. The target number of repositories per
 domain is `crawler.domain.target_per_domain` in `config/experiment.toml`. Usage is in
 [crawler.md](crawler.md#domain-mode).
 
@@ -50,8 +51,13 @@ association instead filled the quota with rare, highly specific topics and left 
 to `max_rounds` or until nothing is added (`[corpus.topics]`). A rarely used topic as the only seed
 leaves a domain almost empty, so each domain has a few seeds.
 
-The result is written to `topic_map.toml` in the config directory, most frequent topics first, and the details (round, count, association, lift, seed association) to the `topic_discovery`
-table. Like every `config/*.toml`, the file is local and not tracked (only the `.example`
+The result is written to `topic_map.toml` in the config directory as two lists per domain, most
+frequent first: `topics`, every discovered topic, used for labels; and `query_topics`, only the
+topics found by round `max_query_round`, used for crawl queries. Later rounds are only indirectly
+related to the seeds (game development and console ports reached computer graphics in round 3), which
+is acceptable for labelling repositories that are crawled anyway, but would steer the crawl itself
+away from the domain. The details (round, count, association, lift, seed association) go to the
+`topic_discovery` table. Like every `config/*.toml`, the file is local and not tracked (only the `.example`
 templates are); keep a copy with the results of each experiment so a run can be reproduced. The
 crawler's domain mode and the labels both read it.
 

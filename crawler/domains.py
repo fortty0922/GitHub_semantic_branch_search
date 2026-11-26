@@ -13,11 +13,13 @@ def read(path: Path) -> dict:
 
 
 def queries(domains: dict, topic_map: dict, max_topics: int) -> dict[str, list[str]]:
-    """Per domain: `topic:` queries for the most frequent topics of topic_map.toml (seeds when the
-    domain is missing there), then the extra queries of domains.toml."""
+    """Per domain: `topic:` queries for the most frequent query topics of topic_map.toml (early
+    discovery rounds; all topics in an older file; seeds when the domain is missing there), then the
+    extra queries of domains.toml."""
     out = {}
     for name, entry in domains.items():
-        topics = topic_map.get(name, {}).get("topics") or entry.get("seed_topics", [])
+        mapped = topic_map.get(name, {})
+        topics = mapped.get("query_topics") or mapped.get("topics") or entry.get("seed_topics", [])
         qs = [f"topic:{t}" for t in topics[:max_topics]] + list(entry.get("queries", []))
         out[name] = list(dict.fromkeys(qs))
     return out

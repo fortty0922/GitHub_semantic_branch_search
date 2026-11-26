@@ -81,9 +81,10 @@ def discover(repos: list[frozenset[str]], seeds: dict[str, list[str]], cfg: dict
     return found
 
 
-def by_domain(found: dict[str, dict], domains: list[str]) -> dict[str, list[str]]:
-    """Topics per domain, most frequent first (seeds included)."""
+def by_domain(found: dict[str, dict], domains: list[str], max_round: int | None = None) -> dict[str, list[str]]:
+    """Topics per domain, most frequent first (seeds included), optionally only up to `max_round`."""
     out = {d: [] for d in domains}
     for t, e in sorted(found.items(), key=lambda kv: (-kv[1]["count"], kv[0])):
-        out[e["domain"]].append(t)
+        if max_round is None or e["round"] <= max_round:
+            out[e["domain"]].append(t)
     return out

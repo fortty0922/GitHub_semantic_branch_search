@@ -8,7 +8,7 @@ seed_topics = ["machine-learning", "deep-learning", "llm"]
 queries = ["\"machine learning\" in:description"]
 
 [devops]
-seed_topics = ["devops", "ci-cd", "infrastructure-as-code"]
+seed_topics = ["devops", "kubernetes", "ci-cd", "infrastructure-as-code"]
 queries = ["devops in:description"]
 
 [data-engineering]
