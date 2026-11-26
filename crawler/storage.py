@@ -124,6 +124,10 @@ class Storage:
                 [(status, i) for i in ids],
             )
 
+    def reset_errors(self) -> int:
+        with self.db:
+            return self.db.execute("UPDATE repos SET readme_status = 'pending' WHERE readme_status = 'error'").rowcount
+
     def release_queued(self) -> None:
         with self.db:
             self.db.execute("UPDATE repos SET readme_status = 'pending' WHERE readme_status = 'queued'")

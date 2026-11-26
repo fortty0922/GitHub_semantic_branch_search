@@ -59,6 +59,9 @@ class Config:
     max_backlog: int = 50_000
     tiers: tuple[Tier, ...] = field(default=DEFAULT_TIERS)
     report_every: float = 60
+    discover: bool = True
+    stop_when_done: bool = False
+    done_check_every: float = 5
 
 
 def iso(ts: int) -> str:
@@ -363,21 +366,28 @@ class Crawler:
                      ", ".join(rates), self.new_repos, self.readmes, self.storage.pending_count(),
                      " | discovery paused" if self.paused_since is not None else "")
 
+    async def watch_done(self) -> None:
+        while self.storage.pending_count() > 0:
+            await asyncio.sleep(self.cfg.done_check_every)
+        log.info("all READMEs in the database are fetched", extra=SUMMARY)
+        self.stop.set()
+
     # ---- lifecycle ----
 
     async def run(self) -> dict:
         self.storage.release_queued()
         self.load_batch_max()
         await self.client.init_limits()
-        log.info("session start: duration=%ss workers=%d graphql_workers=%d batch=%d (max %d) "
+        log.info("session start: mode=%s duration=%ss workers=%d graphql_workers=%d batch=%d (max %d) "
                  "max_backlog=%d db_repos=%d quotas=%s",
-                 self.cfg.duration, self.cfg.workers, self.cfg.graphql_workers, self.batch_size, self.batch_max,
+                 "crawl" if self.cfg.discover else "fill", self.cfg.duration, self.cfg.workers, self.cfg.graphql_workers, self.batch_size, self.batch_max,
                  self.cfg.max_backlog,
                  self.storage.stats()["repos"],
                  {n: l.remaining for n, l in self.client.limiters.items()}, extra=SUMMARY)
         queue: asyncio.Queue = asyncio.Queue()
         tasks = [
-            asyncio.create_task(self.discover()),
+            *([asyncio.create_task(self.discover())] if self.cfg.discover else []),
+            *([asyncio.create_task(self.watch_done())] if self.cfg.stop_when_done else []),
             asyncio.create_task(self.feed(queue)),
             asyncio.create_task(self.report()),
             *(asyncio.create_task(self.fetch_readmes(queue)) for _ in range(self.cfg.workers)),

@@ -29,6 +29,33 @@ When the time budget ends (or on Ctrl+C) all tasks are cancelled, READMEs claime
 fetched are returned to `pending`, and a session summary is logged. The next `run` continues
 from the saved cursors.
 
+### Completeness check and fill
+
+```powershell
+.\.venv\Scripts\python -m crawler check
+.\.venv\Scripts\python -m crawler fill
+```
+
+`check` reads only the database (no token, no network) and prints a JSON report:
+
+- `readme`: counts per `readme_status`, grouped into `done` (`ok`, `none`), `incomplete`
+  (`pending`, `rest`, `queued`) and `failed` (`error`), plus `ok` rows without text;
+- `missing_fields`: rows without `full_name`, `created_at` or `fetched_at`;
+- `tiers`: per star tier, whether it was started, whether the backward sweep reached the earliest
+  date (`sweep_done`), whether a gap since the last run is still open (`open_gap`), and the age of
+  `upper` in hours.
+
+`complete` is true only when no README is incomplete or failed, no `ok` row lacks text, no field is
+missing, and every tier's sweep is done with no open gap. The exit code is 0 when complete and 1
+otherwise, so scripts can test it.
+
+`fill` completes the repositories already in the database without discovering new ones: it runs
+only the GraphQL and REST README workers and exits by itself once nothing is `pending`, `rest` or
+`queued`, then prints the `check` report (and its exit code). Before starting, `error` rows are
+reset to `pending` so each failed README is retried once per `fill`; `--keep-errors` skips that.
+`none` rows (no README) are not retried. `fill` takes the same options as `run` except
+`--max-backlog`. Tier gaps are discovery work and are left to `run`.
+
 ## Logging
 
 - Console: INFO and above from the crawler (window results, per-minute rates). Per-request
@@ -174,7 +201,8 @@ requested. READMEs claimed by a worker are marked `queued` and reset to `pending
 
 ## Known limits
 
-- One-second windows with more than 1000 repositories are truncated (logged as a warning).
+- One-second windows with more than 1000 repositories are truncated (logged as a warning) and are not
+  recorded in the database, so `check` cannot detect them.
 - Repositories created inside a window while it is being paged can shift results between pages;
   the 5-minute index lag makes this rare, and duplicates are ignored.
 - Repositories hidden from search (e.g. flagged accounts) are not discovered.

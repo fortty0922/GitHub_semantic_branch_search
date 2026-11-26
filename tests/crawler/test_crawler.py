@@ -407,3 +407,27 @@ async def test_transport_error_during_shutdown_is_not_counted():
     with pytest.raises(asyncio.CancelledError):
         await client.get("search", "/x")
     assert not client.events
+
+
+async def test_fill_fetches_existing_readmes_without_discovery(tmp_path):
+    paths = []
+
+    def handler(request):
+        paths.append(request.url.path)
+        if request.url.path == "/rate_limit":
+            big = {"limit": 10**9, "remaining": 10**9, "reset": int(time.time()) + 3600}
+            return httpx.Response(200, json={"resources": {"core": big, "search": big, "graphql": big}})
+        if request.url.path == "/graphql":
+            return httpx.Response(200, json={"data": {}})
+        return httpx.Response(200, text="# readme")
+
+    c = make_crawler(tmp_path, handler, discover=False, stop_when_done=True, done_check_every=0.05, report_every=0.1)
+    c.storage.upsert_repos([repo(i) for i in range(1, 30)])
+    c.storage.set_readme(1, "error", None)
+    c.storage.set_readme(2, "none", None)
+    assert c.storage.reset_errors() == 1
+    started = time.time()
+    await c.run()
+    assert time.time() - started < 5
+    assert "/search/repositories" not in paths
+    assert c.storage.stats()["readme"] == {"ok": 28, "none": 1}
