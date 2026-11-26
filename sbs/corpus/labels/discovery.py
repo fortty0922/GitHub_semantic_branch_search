@@ -12,34 +12,52 @@ def topic_sets(rows: Iterable[str | None]) -> list[frozenset[str]]:
     return sets
 
 
+def candidates(repos: list[frozenset[str]], owner: dict[str, str], counts: Counter, cfg: dict) -> list[tuple]:
+    """(domain, topic, assoc, lift, count) for unassigned topics that pass every criterion."""
+    total = len(repos)
+    max_count = cfg["max_df"] * total
+    co: dict[str, Counter] = defaultdict(Counter)
+    members = Counter()
+    for tags in repos:
+        domains = {owner[t] for t in tags if t in owner}
+        members.update(domains)
+        for t in tags:
+            if t not in owner and cfg["min_count"] <= counts[t] <= max_count:
+                for d in domains:
+                    co[t][d] += 1
+    out = []
+    for t, per_domain in co.items():
+        ranked = sorted(((n / counts[t], d) for d, n in per_domain.items()), reverse=True)
+        assoc, d = ranked[0]
+        runner_up = ranked[1][0] if len(ranked) > 1 else 0.0
+        lift = assoc / (members[d] / total)
+        if assoc >= cfg["min_assoc"] and lift >= cfg["min_lift"] and assoc >= cfg["min_margin"] * runner_up:
+            out.append((d, t, assoc, lift, counts[t]))
+    return out
+
+
 def discover(repos: list[frozenset[str]], seeds: dict[str, list[str]], cfg: dict) -> dict[str, dict]:
     """Grow each domain's topic set from its seeds by co-occurrence over a background sample.
 
-    In each round, an unassigned topic seen in at least `min_count` repositories joins a domain
-    when at least `min_assoc` of those repositories also carry one of the domain's current topics,
-    and no other domain reaches `min_assoc` (ambiguous topics stay out). Stops after `max_rounds`
-    rounds or when a round adds nothing. Returns {topic: {domain, round, count, assoc}}.
+    An unassigned topic with `min_count` to `max_df` (share of repositories) occurrences joins
+    domain D when, among its repositories, the share also carrying one of D's current topics
+    (assoc) is at least `min_assoc`, at least `min_lift` times D's share of all repositories, and
+    at least `min_margin` times the share for any other domain. Per round each domain takes at most
+    `max_new_per_round` topics, strongest first; rounds stop after `max_rounds` or when nothing is
+    added. Returns {topic: {domain, round, count, assoc, lift}}.
     """
     counts = Counter(t for tags in repos for t in tags)
-    found = {t.lower(): {"domain": d, "round": 0, "count": counts.get(t.lower(), 0), "assoc": 1.0}
+    found = {t.lower(): {"domain": d, "round": 0, "count": counts.get(t.lower(), 0), "assoc": 1.0, "lift": None}
              for d, ts in seeds.items() for t in ts}
     for rnd in range(1, cfg["max_rounds"] + 1):
         owner = {t: e["domain"] for t, e in found.items()}
-        co: dict[str, Counter] = defaultdict(Counter)
-        for tags in repos:
-            domains = {owner[t] for t in tags if t in owner}
-            if not domains:
-                continue
-            for t in tags:
-                if t not in owner and counts[t] >= cfg["min_count"]:
-                    for d in domains:
-                        co[t][d] += 1
+        by_domain: dict[str, list[tuple]] = defaultdict(list)
+        for d, t, assoc, lift, count in candidates(repos, owner, counts, cfg):
+            by_domain[d].append((assoc, count, t, lift))
         added = 0
-        for t, per_domain in co.items():
-            strong = [(n / counts[t], d) for d, n in per_domain.items() if n / counts[t] >= cfg["min_assoc"]]
-            if len(strong) == 1:
-                assoc, d = strong[0]
-                found[t] = {"domain": d, "round": rnd, "count": counts[t], "assoc": assoc}
+        for d, items in by_domain.items():
+            for assoc, count, t, lift in sorted(items, reverse=True)[: cfg["max_new_per_round"]]:
+                found[t] = {"domain": d, "round": rnd, "count": count, "assoc": assoc, "lift": lift}
                 added += 1
         if not added:
             break

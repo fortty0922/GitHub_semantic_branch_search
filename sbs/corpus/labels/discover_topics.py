@@ -16,8 +16,9 @@ def run(store: Store, settings: dict) -> dict[str, int]:
         sql += " WHERE fork IS NOT 1"
     repos = discovery.topic_sets(t for (t,) in store.iter_rows(sql))
     found = discovery.discover(repos, seeds, settings["experiment"]["corpus"]["topics"])
-    store.replace_all("topic_discovery", ("topic", "domain", "round", "count", "assoc"),
-                      ((t, e["domain"], e["round"], e["count"], e["assoc"]) for t, e in sorted(found.items())))
+    store.reset("topic_discovery")
+    store.replace_all("topic_discovery", ("topic", "domain", "round", "count", "assoc", "lift"),
+                      ((t, e["domain"], e["round"], e["count"], e["assoc"], e["lift"]) for t, e in sorted(found.items())))
     topics = discovery.by_domain(found, list(seeds))
     path = Path(settings["config_dir"]) / "topic_map.toml"
     topic_map_file.write(path, topics)

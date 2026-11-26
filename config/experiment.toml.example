@@ -1,6 +1,10 @@
 [corpus.topics]
 min_count = 30
+max_df = 0.05
 min_assoc = 0.3
+min_lift = 3.0
+min_margin = 2.0
+max_new_per_round = 40
 max_rounds = 3
 
 [corpus.clean]

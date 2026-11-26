@@ -20,12 +20,23 @@ domain is `crawler.domain.target_per_domain` in `config/experiment.toml`. Usage 
 
 `python -m sbs --db <general crawl db> corpus discover-topics` grows each domain's seed topics over
 every repository of a database built by a general (non-domain) crawl, which serves as an unbiased
-background sample. In each round, an unassigned topic that occurs in at least `min_count`
-repositories joins a domain when at least `min_assoc` of those repositories also carry one of the
-domain's current topics; a topic that reaches `min_assoc` for more than one domain (e.g. `python`,
-`docker`) joins none. Rounds repeat up to `max_rounds` or until nothing is added
-(`[corpus.topics]`). The result is written to `topic_map.toml` in the config directory, most
-frequent topics first, and the details (round, count, association) to the `topic_discovery`
+background sample. In each round, an unassigned topic that occurs in between `min_count`
+repositories and a `max_df` share of all repositories (very common topics such as `python` are
+never candidates) joins domain D when, among the repositories carrying it, the share that also
+carries one of D's current topics (assoc) is
+
+- at least `min_assoc`;
+- at least `min_lift` times D's share of all repositories. D's share grows with its topic set, so
+  a large domain needs ever stronger evidence: this keeps one domain from absorbing general
+  topics as it grows;
+- at least `min_margin` times the share for any other domain (topics shared by two domains, e.g.
+  `cuda`, join neither).
+
+Each domain takes at most `max_new_per_round` topics per round, strongest first. Rounds repeat up
+to `max_rounds` or until nothing is added (`[corpus.topics]`). A rarely used topic as the only seed
+leaves a domain almost empty, so each domain has a few seeds.
+
+The result is written to `topic_map.toml` in the config directory, most frequent topics first, and the details (round, count, association, lift) to the `topic_discovery`
 table. Like every `config/*.toml`, the file is local and not tracked (only the `.example`
 templates are); keep a copy with the results of each experiment so a run can be reproduced. The
 crawler's domain mode and the labels both read it.

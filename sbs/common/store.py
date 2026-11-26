@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS topic_discovery (
     domain TEXT NOT NULL,
     round INTEGER NOT NULL,
     count INTEGER NOT NULL,
-    assoc REAL NOT NULL
+    assoc REAL NOT NULL,
+    lift REAL
 );
 CREATE TABLE IF NOT EXISTS topic_expansion (
     topic TEXT PRIMARY KEY,
@@ -61,6 +62,12 @@ class Store:
 
     def close(self) -> None:
         self.db.close()
+
+    def reset(self, table: str) -> None:
+        """Drop a derived table and recreate it from the current schema (picks up new columns)."""
+        with self.db:
+            self.db.execute(f"DROP TABLE IF EXISTS {table}")
+        self.db.executescript(SCHEMA)
 
     def has_column(self, table: str, column: str) -> bool:
         return any(row[1] == column for row in self.db.execute(f"PRAGMA table_info({table})"))
