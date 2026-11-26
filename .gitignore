@@ -7,3 +7,6 @@ __pycache__/
 *.db-shm
 diagnostics/
 logs/
+data/*
+!data/test_set.json
+!data/test_set.sha256

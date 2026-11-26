@@ -9,7 +9,7 @@ This document describes the planned layout and data flow. Method details are in
 [pipeline.md](pipeline.md), the evaluation protocol in [evaluation.md](evaluation.md), and the
 existing crawler in [crawler.md](crawler.md).
 
-> Status: planning. Only `crawler/` exists today; everything else below is the target layout.
+> Status: `crawler/` and `sbs/corpus/` are implemented; the later stages below are the target layout.
 
 ## Data flow
 
@@ -48,7 +48,12 @@ sbs/
     clean.py              strip Markdown, code blocks, HTML, URLs, badges, e-mail addresses
     tokens.py             English tokenizer
     dedup.py              drop forks, template-generated and near-duplicate READMEs
-    labels.py             domain labels: topics → awesome-lists → text classifier
+    awesome_fetch.py      fetch the READMEs of the configured awesome-lists (network)
+    labels/
+      topics.py           topic → domain by majority vote
+      awesome.py          repository links parsed from awesome-list READMEs
+      classifier.py       TF-IDF + logistic regression for the remaining repositories
+      assign.py           applies the three sources in order and writes `labels`
     split.py              frozen test set; train_ids() / test_ids()
   terms/
     extract.py            multi-word term extraction (branching entropy + PMI)
@@ -76,7 +81,8 @@ sbs/
 
 data/                     generated artifacts (git-ignored) except the frozen test-set id file
 tests/
-  crawler/                existing crawler tests
+  crawler/                crawler tests
+  common/                 settings tests
   corpus/ terms/ vectors/ retrieval/ evaluation/   one test file per module
 ```
 
@@ -92,7 +98,7 @@ Rules for the layout:
 | Stage | Reads | Writes |
 |---|---|---|
 | crawler (domain mode) | `domains.toml`, `experiment.toml` | `repos`, `repo_domains` |
-| `corpus` | `repos`, `topic_map.toml`, `awesome_lists.toml` | `docs_clean`, `tokens`, `labels`, test-set id file |
+| `corpus` | `repos`, `experiment.toml`, `topic_map.toml`, `awesome_lists.toml` | `docs_clean`, `tokens`, `dedup`, `awesome_lists`, `labels`, test-set id file |
 | `terms` | `tokens`, `labels` (train only) | `terms` (counts per domain, Jaccard, TF-IDF, rank) |
 | `vectors` | `tokens`, `terms`, `labels` (train only) | word2vec model, occurrence vectors, repository embeddings, `repo_cluster`, probe scores |
 | `retrieval` | `docs_clean`, embeddings, `repo_cluster` | BM25 index, group-name cache |

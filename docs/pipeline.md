@@ -26,44 +26,76 @@ halved until each fits). The domain mode adds:
 
 Stored per repository: README, description, topics, metadata and fetch date.
 
+### Running
+
+```
+python -m sbs [--db crawler.db] [--config config] corpus <step>
+```
+
+Steps: `clean`, `tokenize`, `dedup`, `fetch-awesome`, `label`, `split`, and `all`
+(clean → tokenize → dedup → label → split). `fetch-awesome` is the only step that uses the network
+(it needs `GITHUB_TOKEN`, as the crawler does) and is run once before `label`. Every other step
+rebuilds its table from the previous step's output, so a step can be re-run after a config change.
+`split` never overwrites a frozen test set; under `all` it is skipped with a message.
+
+The parameters of every step are under `[corpus.*]` in `config/experiment.toml`.
+
 ### Cleaning (`corpus/clean.py`)
 
-Removed from the README text: fenced and indented code blocks, inline code, HTML tags, images and
-badges, link targets (link text is kept), bare URLs, e-mail addresses, and Markdown markup
-(headings, emphasis, tables, list markers). The result is stored in `docs_clean`.
+Input: repositories with `readme_status = 'ok'`. Removed from the README text: fenced and indented
+code blocks, inline code, HTML comments, `<pre>`/`<code>`/`<script>`/`<style>` blocks, images and
+badges, reference link definitions, link targets (link text is kept), remaining HTML tags (inner
+text kept), HTML entities (unescaped), bare URLs and autolinks, e-mail addresses, and Markdown
+markup (headings, emphasis, blockquotes, tables, list markers, rules). Paragraph breaks are kept.
+Documents that are empty after cleaning are dropped. The result is stored in `docs_clean`.
 
 ### Tokenization (`corpus/tokens.py`)
 
 Regex-based English tokenizer, lower-cased, keeping technical tokens such as `c++`, `c#`,
-`node.js`. Stop words are kept here and removed only where a stage needs it, because term
-extraction relies on them as boundaries.
+`node.js`, `.net`, hyphenated and snake_case words. Text is split into sentences on line breaks and
+`. ! ? ; :` followed by whitespace, so terms are never extracted across sentences. Stop words are
+kept here and removed only where a stage needs it, because term extraction relies on them as
+boundaries. `tokens` stores one sentence per line with space-separated tokens, plus the token count.
 
 ### De-duplication (`corpus/dedup.py`)
 
-1. Drop repositories flagged `fork` or `is_template`.
-2. Exact duplicates: hash of the normalised cleaned text.
-3. Near duplicates (template-generated READMEs): MinHash LSH over word shingles above a
-   similarity parameter.
+Each repository gets one `dedup.status`, decided in this order:
 
-Within each duplicate group the repository with the most stars is kept.
+1. `fork` / `template`: repositories flagged `fork` or `is_template`. The step runs only when
+   those columns exist in `repos`; a database from the original crawler schema skips it and logs that.
+2. `empty` (no tokens) and `short` (fewer than `min_tokens` tokens).
+3. `exact`: same SHA-256 of the token sequence.
+4. `near` (template-generated READMEs): MinHash LSH over word shingles of `shingle_size` with
+   `num_perm` permutations, Jaccard `threshold`; candidate pairs are merged transitively into groups.
 
-### Domain labels (`corpus/labels.py`)
+Within each duplicate group the repository with the most stars is `kept` (ties: lowest id), and
+the others point to it through `kept_id`. Later stages read only `kept` repositories.
 
-Applied in order, first match wins:
+### Domain labels (`corpus/labels/`)
 
-1. **Topics**: `config/topic_map.toml` maps GitHub topics to domains.
-2. **Awesome-lists**: the READMEs listed in `config/awesome_lists.toml` are parsed for repository
-   links; a repository listed under a domain's list gets that domain.
-3. **Text classifier**: TF-IDF + logistic regression trained on repositories labelled by 1–2;
-   predictions below a confidence parameter are labelled `unknown` and excluded.
+Applied in order to `kept` repositories, first match wins:
 
-`label_source` (`topic`, `awesome`, `model`) is stored so the audit can report accuracy per
-source.
+1. **Topics** (`topics.py`): `config/topic_map.toml` maps GitHub topics to domains; the domain with
+   the most matching topics wins, a tie gives no label.
+2. **Awesome-lists** (`awesome.py`): `fetch-awesome` stores the READMEs of the lists in
+   `config/awesome_lists.toml` in `awesome_lists`; GitHub repository links are parsed from them
+   (case-insensitive, the list itself excluded). A repository linked from lists of more than one
+   domain gets no label from this source.
+3. **Text classifier** (`classifier.py`): TF-IDF + logistic regression trained on repositories
+   labelled by 1–2, over description, topics and README tokens; predictions below `min_confidence`
+   are labelled `unknown` and excluded.
+
+`label_source` (`topic`, `awesome`, `model`) and, for `model`, the predicted probability
+(`confidence`) are stored so the audit can report accuracy per source.
 
 ### Frozen test set (`corpus/split.py`)
 
-Stratified by domain, size and seed are parameters. Frozen immediately and never used for tuning;
-see [Test-set isolation](architecture.md#test-set-isolation).
+Stratified by domain over `kept` repositories with a known label: within each domain the sorted
+ids are shuffled with `seed` and the first `test_fraction` (rounded) are taken. The ids, seed and
+creation date are written to the `paths.test_set` file together with a `.sha256` file of its
+contents; both are committed. `test_ids()` refuses a file whose hash does not match, and
+`train_ids()` is every labelled `kept` repository not in the test set. Frozen immediately and never
+used for tuning; see [Test-set isolation](architecture.md#test-set-isolation).
 
 ## 2. Term processing
 

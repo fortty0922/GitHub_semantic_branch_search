@@ -22,7 +22,7 @@ meaning, names each group, and suggests follow-up keywords. Design documents:
 |---|---|---|
 | Crawler (star tiers, created windows, README fetching) | `crawler/` | Done |
 | Crawler domain mode | `crawler/` | Planned |
-| Data preparation | `sbs/corpus/` | Planned |
+| Data preparation | `sbs/corpus/` | Done |
 | Term processing | `sbs/terms/` | Planned |
 | Vectors and clustering | `sbs/vectors/` | Planned |
 | Retrieval | `sbs/retrieval/` | Planned |

@@ -1,0 +1,18 @@
+[corpus.dedup]
+min_tokens = 20
+shingle_size = 5
+num_perm = 128
+threshold = 0.9
+
+[corpus.labels]
+min_confidence = 0.6
+max_features = 50000
+min_df = 2
+C = 1.0
+
+[corpus.split]
+test_fraction = 0.1
+seed = 20261126
+
+[paths]
+test_set = "data/test_set.json"

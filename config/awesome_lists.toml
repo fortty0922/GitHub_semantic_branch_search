@@ -1,0 +1,17 @@
+[machine-learning]
+lists = ["josephmisiti/awesome-machine-learning", "ChristosChristofidis/awesome-deep-learning"]
+
+[devops]
+lists = ["wmariuss/awesome-devops", "ramitsurana/awesome-kubernetes", "veggiemonk/awesome-docker"]
+
+[data-engineering]
+lists = ["igorbarinov/awesome-data-engineering", "oxnr/awesome-bigdata"]
+
+[web-backend]
+lists = ["wsvincent/awesome-django", "mjhea0/awesome-flask", "mjhea0/awesome-fastapi"]
+
+[computer-graphics]
+lists = ["luisnts/awesome-computer-graphics", "eug/awesome-opengl", "vinjn/awesome-vulkan"]
+
+[operating-systems]
+lists = ["jubalh/awesome-os"]

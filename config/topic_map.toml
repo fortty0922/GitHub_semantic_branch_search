@@ -1,0 +1,39 @@
+[machine-learning]
+topics = [
+    "machine-learning", "deep-learning", "neural-network", "neural-networks", "pytorch",
+    "tensorflow", "keras", "scikit-learn", "computer-vision", "nlp", "natural-language-processing",
+    "reinforcement-learning", "llm", "transformers", "artificial-intelligence",
+]
+
+[devops]
+topics = [
+    "devops", "kubernetes", "docker", "ci-cd", "continuous-integration", "continuous-delivery",
+    "terraform", "ansible", "helm", "infrastructure-as-code", "gitops", "monitoring", "prometheus",
+    "jenkins", "github-actions",
+]
+
+[data-engineering]
+topics = [
+    "data-engineering", "etl", "elt", "apache-spark", "spark", "airflow", "apache-airflow",
+    "kafka", "apache-kafka", "data-pipeline", "data-warehouse", "dbt", "big-data", "hadoop",
+    "flink", "data-lake",
+]
+
+[web-backend]
+topics = [
+    "backend", "rest-api", "api-server", "django", "flask", "fastapi", "express", "expressjs",
+    "spring-boot", "rails", "ruby-on-rails", "laravel", "graphql-server", "microservices",
+    "web-framework",
+]
+
+[computer-graphics]
+topics = [
+    "computer-graphics", "graphics", "opengl", "vulkan", "directx", "webgl", "ray-tracing",
+    "raytracing", "rendering", "renderer", "shaders", "glsl", "path-tracing", "game-engine",
+]
+
+[operating-systems]
+topics = [
+    "operating-system", "os", "kernel", "osdev", "linux-kernel", "bootloader", "microkernel",
+    "unix", "x86-64", "riscv", "bare-metal", "hypervisor", "filesystem",
+]
