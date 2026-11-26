@@ -6,7 +6,7 @@ from tests.corpus.conftest import add_repo
 
 SEEDS = {"ml": ["machine-learning"], "ops": ["devops"]}
 CFG = {"min_count": 3, "max_df": 0.3, "min_assoc": 0.5, "min_lift": 2.0, "min_margin": 2.0,
-       "max_new_per_round": 10, "max_rounds": 3}
+       "max_new_per_round": 10, "max_rounds": 3, "min_seed_assoc": 0.0}
 
 
 def sets(*rows):
@@ -35,6 +35,13 @@ def test_discovery_grows_from_seeds_in_rounds():
     assert discovery.by_domain(found, ["ml", "ops"])["ml"] == ["pytorch", "machine-learning", "torchvision"]
 
 
+def test_seed_anchor_stops_drifting_chains():
+    anchored = discovery.discover(BACKGROUND, SEEDS, dict(CFG, min_seed_assoc=0.1))
+    assert "pytorch" in anchored and "kubernetes" in anchored
+    assert "torchvision" not in anchored and "helm" not in anchored
+    assert anchored["pytorch"]["seed_assoc"] == 0.5
+
+
 def test_frequent_topics_are_never_candidates():
     loose = dict(CFG, min_assoc=0.1, min_lift=1.0, min_margin=1.0)
     assert "python" in discovery.discover(BACKGROUND, SEEDS, loose)
@@ -50,7 +57,8 @@ def test_shared_topics_fail_the_margin():
 def test_round_cap_and_max_rounds():
     repos = BACKGROUND + sets(*[["machine-learning", "jax"]] * 6)
     capped = discovery.discover(repos, SEEDS, dict(CFG, max_new_per_round=1, max_rounds=1))
-    assert [t for t, e in capped.items() if e["round"] == 1 and e["domain"] == "ml"] == ["jax"]
+    assert [t for t, e in capped.items() if e["round"] == 1 and e["domain"] == "ml"] == ["pytorch"]
+    assert capped["pytorch"]["count"] > discovery.discover(repos, SEEDS, CFG)["jax"]["count"]
     assert "torchvision" not in discovery.discover(BACKGROUND, SEEDS, dict(CFG, max_rounds=1))
 
 
@@ -69,12 +77,28 @@ def test_run_writes_topic_map_into_config_dir(store, example_config):
     settings = settings_mod.load(config)
     settings["experiment"]["corpus"]["topics"] = CFG
     for i in range(1, 7):
-        add_repo(store, i, None, topics=["machine-learning", "pytorch"] if i <= 3 else ["pytorch", "cuda"])
+        tags = ["machine-learning", "pytorch"] if i <= 3 else ["pytorch", "cuda"]
+        add_repo(store, i, None, topics=[*tags, f"u{i}"])
     for i in range(10, 40):
-        add_repo(store, i, None, topics=["misc"])
+        add_repo(store, i, None, topics=["misc", f"u{i}"])
+    for i in range(50, 60):
+        add_repo(store, i, None, topics=["machine-learning", "spam", f"u{i}"])
+    for i in range(60, 70):
+        add_repo(store, i, None, topics=["machine-learning", "clone"])
+    discover_topics.run(store, settings)
+    before = tomllib.loads((config / "topic_map.toml").read_text(encoding="utf-8"))["ml"]["topics"]
+    assert "spam" in before and "clone" not in before
+    store.replace_all("dedup", ("repo_id", "status", "kept_id"),
+                      [(i, "kept", None) for i in [*range(1, 7), *range(10, 40), *range(60, 70)]]
+                      + [(i, "boilerplate", None) for i in range(50, 60)])
     discover_topics.run(store, settings)
     written = tomllib.loads((config / "topic_map.toml").read_text(encoding="utf-8"))
-    assert written == {"ml": {"topics": ["pytorch", "cuda", "machine-learning"]}, "ops": {"topics": ["devops"]}}
+    assert written == {"ml": {"topics": ["pytorch", "machine-learning", "cuda"]}, "ops": {"topics": ["devops"]}}
     assert store.db.execute("SELECT COUNT(*) FROM topic_discovery").fetchone()[0] == 4
     store.reset("topic_discovery")
     assert store.has_column("topic_discovery", "lift")
+
+
+def test_identical_topic_lists_count_once():
+    rows = ['["a", "b"]', '["b", "a"]', '["A", "b"]', '["solo"]', '["solo"]', "[]", None]
+    assert discovery.topic_sets(rows) == [frozenset({"a", "b"}), frozenset({"solo"}), frozenset({"solo"})]

@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS topic_discovery (
     round INTEGER NOT NULL,
     count INTEGER NOT NULL,
     assoc REAL NOT NULL,
-    lift REAL
+    lift REAL,
+    seed_assoc REAL
 );
 CREATE TABLE IF NOT EXISTS topic_expansion (
     topic TEXT PRIMARY KEY,

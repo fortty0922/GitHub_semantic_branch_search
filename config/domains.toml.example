@@ -4,7 +4,7 @@
 # (e.g. `backend`) leave a domain almost empty.
 
 [machine-learning]
-seed_topics = ["machine-learning", "deep-learning"]
+seed_topics = ["machine-learning", "deep-learning", "llm"]
 queries = ["\"machine learning\" in:description"]
 
 [devops]

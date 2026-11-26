@@ -19,8 +19,14 @@ domain is `crawler.domain.target_per_domain` in `config/experiment.toml`. Usage 
 ### Topic discovery (`corpus/labels/discovery.py`)
 
 `python -m sbs --db <general crawl db> corpus discover-topics` grows each domain's seed topics over
-every repository of a database built by a general (non-domain) crawl, which serves as an unbiased
-background sample. In each round, an unassigned topic that occurs in between `min_count`
+the repositories of a database built by a general (non-domain) crawl, which serves as an unbiased
+background sample. When the corpus stage has run on that database, only repositories that dedup
+kept are used: spam campaigns, template copies and non-English repositories otherwise inflate the
+topics they share (one run pulled Roblox-script and Windows-tweak topics into computer graphics).
+Identical multi-topic lists also count once: spam campaigns publish hundreds of repositories with
+the same topic list, including a seed such as `vulkan`, and their topics would otherwise look
+strongly associated with the seed from the first round on; the seed anchor below cannot catch
+that, since in the first round the current topics are the seeds. In each round, an unassigned topic that occurs in between `min_count`
 repositories and a `max_df` share of all repositories (very common topics such as `python` are
 never candidates) joins domain D when, among the repositories carrying it, the share that also
 carries one of D's current topics (assoc) is
@@ -30,13 +36,17 @@ carries one of D's current topics (assoc) is
   a large domain needs ever stronger evidence: this keeps one domain from absorbing general
   topics as it grows;
 - at least `min_margin` times the share for any other domain (topics shared by two domains, e.g.
-  `cuda`, join neither).
+  `cuda`, join neither);
+- and at least `min_seed_assoc` of its repositories carry one of D's original seed topics. This
+  anchors every round to the seeds: without it, chains drift (`vulkan` → `directx` →
+  `windows-11` → `debloat`), each step related only to the topic added just before.
 
-Each domain takes at most `max_new_per_round` topics per round, strongest first. Rounds repeat up
+Each domain takes at most `max_new_per_round` topics per round, most frequent first (ranking by
+association instead filled the quota with rare, highly specific topics and left out `pytorch`). Rounds repeat up
 to `max_rounds` or until nothing is added (`[corpus.topics]`). A rarely used topic as the only seed
 leaves a domain almost empty, so each domain has a few seeds.
 
-The result is written to `topic_map.toml` in the config directory, most frequent topics first, and the details (round, count, association, lift) to the `topic_discovery`
+The result is written to `topic_map.toml` in the config directory, most frequent topics first, and the details (round, count, association, lift, seed association) to the `topic_discovery`
 table. Like every `config/*.toml`, the file is local and not tracked (only the `.example`
 templates are); keep a copy with the results of each experiment so a run can be reproduced. The
 crawler's domain mode and the labels both read it.

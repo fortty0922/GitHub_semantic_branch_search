@@ -4,7 +4,8 @@ max_df = 0.05
 min_assoc = 0.3
 min_lift = 3.0
 min_margin = 2.0
-max_new_per_round = 40
+min_seed_assoc = 0.05
+max_new_per_round = 100
 max_rounds = 3
 
 [corpus.clean]
