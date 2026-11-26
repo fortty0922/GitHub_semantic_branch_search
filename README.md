@@ -10,11 +10,26 @@ See [docs/crawler.md](docs/crawler.md) for setup, usage and design.
 
 The corpus is used to study terms whose meaning depends on the technical domain (e.g.
 *pipeline* in machine learning vs DevOps) and to build a repository search that groups results by
-meaning, names each group, and suggests follow-up keywords. The project is in the planning stage:
+meaning, names each group, and suggests follow-up keywords. Design documents:
 
 - [docs/architecture.md](docs/architecture.md) — layout, data flow, design decisions, roadmap
 - [docs/pipeline.md](docs/pipeline.md) — data preparation, term processing, vectors, retrieval
 - [docs/evaluation.md](docs/evaluation.md) — metrics, simulated user, controls, error analysis
+
+## Implementation status
+
+| Stage | Package | Status |
+|---|---|---|
+| Crawler (star tiers, created windows, README fetching) | `crawler/` | Done |
+| Crawler domain mode | `crawler/` | Planned |
+| Data preparation | `sbs/corpus/` | Planned |
+| Term processing | `sbs/terms/` | Planned |
+| Vectors and clustering | `sbs/vectors/` | Planned |
+| Retrieval | `sbs/retrieval/` | Planned |
+| Demo | `sbs/web/` | Planned |
+| Evaluation | `sbs/evaluation/` | Planned |
+
+Stage order and details: [docs/architecture.md#roadmap](docs/architecture.md#roadmap).
 
 ## Intended use and compliance
 
