@@ -4,7 +4,8 @@ A crawler that collects public GitHub repository metadata and README text into S
 the official GitHub REST and GraphQL APIs, staying within the published rate limits. The data
 is intended as a corpus for research on semantic search over repositories.
 
-See [docs/crawler.md](docs/crawler.md) for setup, usage and design.
+Setup (Python 3.11+): run `init.bat` on Windows or `./init.sh` on Linux/macOS, then set
+`GITHUB_TOKEN` in `.env`. See [docs/crawler.md](docs/crawler.md) for usage and design.
 
 ## Research goal
 

@@ -6,10 +6,18 @@ and recent repositories first, and resumes across runs without fetching a reposi
 
 ## Usage
 
+Setup needs Python 3.11+. `init.bat` (Windows) or `./init.sh` (Linux/macOS, Git Bash) creates
+`.venv`, installs `requirements.txt` and copies `.env.example` to `.env` if it is missing;
+re-running it only updates the dependencies. Set `PYTHON` to choose the interpreter. Then put a
+personal access token in `GITHUB_TOKEN` in `.env`. The manual equivalent:
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements.txt
-copy .env.example .env    # then put a personal access token in GITHUB_TOKEN
+copy .env.example .env
+```
+
+```powershell
 .\.venv\Scripts\python -m crawler run --hours 2
 .\.venv\Scripts\python -m crawler stats
 ```
