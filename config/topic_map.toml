@@ -35,5 +35,5 @@ topics = [
 [operating-systems]
 topics = [
     "operating-system", "os", "kernel", "osdev", "linux-kernel", "bootloader", "microkernel",
-    "unix", "x86-64", "riscv", "bare-metal", "hypervisor", "filesystem",
+    "unix", "x86-64", "riscv", "bare-metal", "hypervisor",
 ]

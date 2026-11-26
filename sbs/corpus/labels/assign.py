@@ -3,7 +3,7 @@ import logging
 from collections import Counter
 
 from sbs.common.store import Store
-from sbs.corpus.labels import awesome, classifier, threshold, topics
+from sbs.corpus.labels import awesome, classifier, expansion, threshold, topics
 from sbs.corpus.tokens import tokenize
 
 log = logging.getLogger("sbs")
@@ -21,6 +21,9 @@ def features(description: str | None, topics_json: str | None, token_text: str) 
     return " ".join((head, tags, token_text.replace("\n", " ")))
 
 
+KEPT_TOPICS = "SELECT r.topics FROM dedup d JOIN repos r ON r.id = d.repo_id WHERE d.status = 'kept'"
+
+
 def other_example(topics_json: str | None, index: dict, min_topics: int) -> bool:
     """Enough topics and none of them mapped to a domain: a training example for `other`."""
     tags = [t.lower() for t in json.loads(topics_json or "[]")]
@@ -31,6 +34,12 @@ def run(store: Store, settings: dict, manual: dict[int, str] | None = None) -> d
     manual = manual or {}
     cfg = settings["experiment"]["corpus"]["labels"]
     topic_index = topics.invert(settings["topic_map"])
+    expanded = expansion.expand((t for (t,) in store.iter_rows(KEPT_TOPICS)), topic_index, cfg["expansion"])
+    ext_index = expansion.as_index(expanded)
+    known = topic_index | ext_index
+    store.replace_all("topic_expansion", ("topic", "domain", "count", "purity"),
+                      ((t, e["domain"], e["count"], e["purity"]) for t, e in sorted(expanded.items())))
+    log.info("label: %d topics added by expansion", len(expanded))
     awesome_index = awesome.index(store)
     labels: dict[int, tuple[str, str, float | None]] = {}
     pending: list[tuple[int, str]] = []
@@ -42,6 +51,8 @@ def run(store: Store, settings: dict, manual: dict[int, str] | None = None) -> d
         else:
             domain, source = topics.label(topics_json, topic_index), "topic"
             if domain is None:
+                domain, source = topics.label(topics_json, ext_index), "topic_ext"
+            if domain is None:
                 domain, source = awesome_index.get(full_name.lower()), "awesome"
         if domain is not None:
             labels[repo_id] = (domain, source, None)
@@ -50,7 +61,7 @@ def run(store: Store, settings: dict, manual: dict[int, str] | None = None) -> d
                 train_labels.append(domain)
             continue
         pending.append((repo_id, text))
-        if other_example(topics_json, topic_index, cfg["other_min_topics"]):
+        if other_example(topics_json, known, cfg["other_min_topics"]):
             train_texts.append(text)
             train_labels.append(classifier.OTHER)
 

@@ -47,12 +47,15 @@ sbs/
   corpus/
     clean.py              strip Markdown, code blocks, HTML, URLs, badges, e-mail addresses
     tokens.py             English tokenizer
-    dedup.py              drop forks, template-generated and near-duplicate READMEs
+    dedup.py              drop forks, non-English, template-generated and near-duplicate READMEs
+    language.py           English-letter ratio used by dedup
     awesome_fetch.py      fetch the READMEs of the configured awesome-lists (network)
     labels/
       topics.py           topic → domain by majority vote
+      expansion.py        unmapped topics added to a domain by co-occurrence
       awesome.py          repository links parsed from awesome-list READMEs
-      classifier.py       TF-IDF + logistic regression for the remaining repositories
+      classifier.py       TF-IDF + logistic regression (domains + other) for the remaining repositories
+      threshold.py        per-domain acceptance thresholds from cross-validation
       assign.py           applies the three sources in order and writes `labels`
     split.py              frozen test set; train_ids() / test_ids()
     manual.py             manual label / exclusion override files

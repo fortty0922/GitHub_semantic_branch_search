@@ -29,7 +29,7 @@ async def fetch_awesome(store: Store, settings: dict) -> None:
 def run_step(step: str, store: Store, settings: dict) -> None:
     experiment = settings["experiment"]
     if step == "clean":
-        clean.run(store)
+        clean.run(store, experiment["corpus"]["clean"])
     elif step == "tokenize":
         tokens.run(store)
     elif step == "dedup":

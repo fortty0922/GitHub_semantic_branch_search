@@ -1,7 +1,7 @@
 from sbs.corpus import clean, dedup, split, tokens
 from sbs.corpus.labels import assign
 from sbs.review import checks, frames
-from tests.corpus.conftest import LABEL_CFG, add_repo, dedup_cfg
+from tests.corpus.conftest import CLEAN_CFG, LABEL_CFG, add_repo, dedup_cfg
 from tests.corpus.test_labels import ML, OPS, TOPIC_MAP, doc
 
 
@@ -12,7 +12,7 @@ def build(store):
     add_repo(store, 30, doc(ML, 1), stars=0, name="o/copy")
     add_repo(store, 31, "Text with a leftover | pipe and `tick`", stars=0)
     store.upsert_awesome("a/ml", "machine-learning", "github.com/o/r1 github.com/missing/repo", 0)
-    clean.run(store)
+    clean.run(store, CLEAN_CFG)
     tokens.run(store)
     dedup.run(store, dedup_cfg())
     assign.run(store, {"topic_map": TOPIC_MAP, "experiment": {"corpus": {"labels": LABEL_CFG}}})

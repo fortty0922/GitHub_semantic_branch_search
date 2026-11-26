@@ -1,6 +1,6 @@
 from sbs.corpus import clean, dedup, manual, tokens
 from sbs.corpus.labels import assign
-from tests.corpus.conftest import LABEL_CFG, add_repo, dedup_cfg
+from tests.corpus.conftest import CLEAN_CFG, LABEL_CFG, add_repo, dedup_cfg
 from tests.corpus.test_labels import ML, OPS, TOPIC_MAP, doc
 
 DEDUP = dedup_cfg()
@@ -25,7 +25,7 @@ def test_excluded_repo_lets_duplicate_be_kept(store):
     text = " ".join(f"w{i}" for i in range(50))
     add_repo(store, 1, text, stars=100)
     add_repo(store, 2, text, stars=1)
-    clean.run(store)
+    clean.run(store, CLEAN_CFG)
     tokens.run(store)
     dedup.run(store, DEDUP, {1: "bad", 99: "not in db"})
     assert dict(store.db.execute("SELECT repo_id, status FROM dedup")) == {1: "excluded", 2: "kept"}
@@ -35,7 +35,7 @@ def test_manual_label_wins(store):
     for i in range(1, 4):
         add_repo(store, i, doc(ML, i), topics=["pytorch"])
         add_repo(store, 10 + i, doc(OPS, i), topics=["docker"])
-    clean.run(store)
+    clean.run(store, CLEAN_CFG)
     tokens.run(store)
     dedup.run(store, DEDUP)
     settings = {"topic_map": TOPIC_MAP, "experiment": {"corpus": {"labels": LABEL_CFG}}}

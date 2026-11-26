@@ -50,10 +50,17 @@ The parameters of every step are under `[corpus.*]` in `config/experiment.toml`.
 ### Cleaning (`corpus/clean.py`)
 
 Input: repositories with `readme_status = 'ok'`. Removed from the README text: fenced and indented
-code blocks, inline code, HTML comments, `<pre>`/`<code>`/`<script>`/`<style>` blocks, images and
-badges, reference link definitions, link targets (link text is kept), remaining HTML tags (inner
-text kept), HTML entities (unescaped), bare URLs and autolinks, e-mail addresses, and Markdown
-markup (headings, emphasis, blockquotes, tables, list markers, rules). Paragraph breaks are kept.
+code blocks, HTML comments, `<pre>`/`<code>`/`<script>`/`<style>` blocks, license boilerplate
+(paragraphs containing standard license wording such as the Apache, MIT, GPL or BSD texts, and
+copyright lines), GitHub alert markers (`[!NOTE]` etc.), images and badges (inline and
+reference-style), reference link definitions, link targets (link text is kept), remaining HTML
+tags (inner text kept), HTML entities (unescaped), bare URLs and autolinks, e-mail addresses, and
+Markdown markup (tables, blockquotes, list markers, headings, emphasis, rules; container markup is
+removed before headings so a heading inside a quote or table is caught). Inline code on a single
+line is kept as text when it has at most `inline_code_max_words` words (tool and command names
+such as `docker compose` carry domain information) and removed otherwise; stray backticks are
+dropped. Paragraph breaks are kept. License text is removed because it is identical across
+unrelated projects and would otherwise make them near duplicates.
 Documents that are empty after cleaning are dropped. The result is stored in `docs_clean`.
 
 ### Tokenization (`corpus/tokens.py`)
@@ -83,9 +90,12 @@ the others point to it through `kept_id`.
 
 6. `boilerplate`: a duplicate group (exact and near combined) with at least `max_group_size`
    repositories is a template README (e.g. a framework's generated README) or spam, so the whole
-   group, kept repository included, is dropped. The exception is a group whose kept repository has
-   more than `keep_star_ratio` times the stars of any other member: an original with its copies,
-   where the original stays `kept`.
+   group, kept repository included, is dropped. Two kinds of group are an original with its copies
+   instead, and keep the original `kept`:
+   - mirrors: at least `mirror_share` of the members have the kept repository's name inside their
+     own (compared without case and punctuation, e.g. `*/linux`, `*/openwrt`);
+   - star dominance: the kept repository has more than `keep_star_ratio` times the stars of any
+     other member.
 
 Later stages read only `kept` repositories.
 
@@ -95,6 +105,12 @@ Applied in order to `kept` repositories, first match wins (a manual label, if an
 
 1. **Topics** (`topics.py`): `config/topic_map.toml` maps GitHub topics to domains; the domain with
    the most matching topics wins, a tie gives no label.
+   **Expanded topics** (`expansion.py`, source `topic_ext`): among repositories labelled by mapped
+   topics, an unmapped topic seen at least `min_count` times with at least `min_purity` of them in
+   one domain is added to that domain (`[corpus.labels.expansion]`; `exclude` vetoes topics). The
+   added topics are stored in `topic_expansion` and applied only when the mapped topics give no
+   label. They also count as mapped when choosing `other` examples, so domain repositories tagged
+   with newer topics (e.g. an LLM tag) are not used as `other`.
 2. **Awesome-lists** (`awesome.py`): `fetch-awesome` stores the READMEs of the lists in
    `config/awesome_lists.toml` in `awesome_lists`; GitHub repository links are parsed from them
    (case-insensitive, the list itself excluded). A repository linked from lists of more than one
@@ -117,7 +133,7 @@ Applied in order to `kept` repositories, first match wins (a manual label, if an
 measured on repositories that have topics or are in awesome-lists, which are usually easier than
 the rest, so it is an optimistic estimate; the label audit reports the real accuracy.
 
-`label_source` (`topic`, `awesome`, `manual`, `model`) and, for `model`, the predicted
+`label_source` (`topic`, `topic_ext`, `awesome`, `manual`, `model`) and, for `model`, the predicted
 probability (`confidence`) are stored so the audit can report accuracy per source.
 
 ### Manual overrides (`corpus/manual.py`)

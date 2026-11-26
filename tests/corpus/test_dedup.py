@@ -1,5 +1,5 @@
 from sbs.corpus import clean, dedup, tokens
-from tests.corpus.conftest import add_repo, dedup_cfg
+from tests.corpus.conftest import CLEAN_CFG, add_repo, dedup_cfg
 
 CFG = dedup_cfg(min_tokens=5, threshold=0.8)
 BASE = " ".join(f"word{i}" for i in range(60))
@@ -7,7 +7,7 @@ OTHER = " ".join(f"other{i}" for i in range(60))
 
 
 def prepare(store):
-    clean.run(store)
+    clean.run(store, CLEAN_CFG)
     tokens.run(store)
     return dedup.run(store, CFG)
 
@@ -69,9 +69,20 @@ def test_large_groups_are_boilerplate_unless_dominated(store):
     add_repo(store, 10, OTHER, stars=5000)
     for i in range(11, 14):
         add_repo(store, i, OTHER, stars=1)
-    clean.run(store)
+    clean.run(store, CLEAN_CFG)
     tokens.run(store)
     dedup.run(store, dedup_cfg(max_group_size=4))
     st = statuses(store)
     assert all(st[i] == ("boilerplate", None) for i in range(1, 5))
     assert st[10] == ("kept", None) and st[11] == ("exact", 10)
+
+
+def test_mirror_group_keeps_original(store):
+    add_repo(store, 1, BASE, stars=100, name="torvalds/linux")
+    for i, name in enumerate(["a/linux", "b/linux-fork", "c/Linux", "d/kernel"], start=2):
+        add_repo(store, i, BASE, stars=50, name=name)
+    clean.run(store, CLEAN_CFG)
+    tokens.run(store)
+    dedup.run(store, dedup_cfg(max_group_size=4))
+    st = statuses(store)
+    assert st[1] == ("kept", None) and st[5] == ("exact", 1)

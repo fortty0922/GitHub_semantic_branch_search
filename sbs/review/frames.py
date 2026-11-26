@@ -70,6 +70,10 @@ def label_crosstab(store: Store) -> pd.DataFrame:
     return pd.crosstab(df["domain"], df["label_source"], margins=True)
 
 
+def topic_expansion(store: Store) -> pd.DataFrame:
+    return query(store, "SELECT * FROM topic_expansion ORDER BY domain, count DESC")
+
+
 def label_thresholds(store: Store) -> pd.DataFrame:
     return query(store, "SELECT * FROM label_thresholds ORDER BY domain").set_index("domain")
 

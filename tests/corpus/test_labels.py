@@ -4,7 +4,7 @@ import numpy as np
 
 from sbs.corpus import clean, dedup, tokens
 from sbs.corpus.labels import assign, classifier, threshold, topics
-from tests.corpus.conftest import LABEL_CFG, add_repo, dedup_cfg
+from tests.corpus.conftest import CLEAN_CFG, LABEL_CFG, add_repo, dedup_cfg
 
 TOPIC_MAP = {"machine-learning": {"topics": ["pytorch", "deep-learning"]},
              "devops": {"topics": ["kubernetes", "docker"]}}
@@ -55,7 +55,7 @@ def test_source_priority_and_other(store):
     add_repo(store, 24, doc(MISC, 24))
     store.upsert_awesome("a/ml", "machine-learning", "github.com/x/listed github.com/X/Listed2 github.com/x/both", 0)
     store.upsert_awesome("a/ops", "devops", "github.com/x/both", 0)
-    clean.run(store)
+    clean.run(store, CLEAN_CFG)
     tokens.run(store)
     dedup.run(store, dedup_cfg(threshold=0.95))
     settings = {"topic_map": TOPIC_MAP, "experiment": {"corpus": {"labels": LABEL_CFG}}}
@@ -71,3 +71,18 @@ def test_source_priority_and_other(store):
     stored = dict(store.db.execute("SELECT domain, threshold FROM label_thresholds"))
     assert set(stored) == {"machine-learning", "devops"}
     assert 24 not in store.labelled() and 1 in store.labelled(("topic",)) and 23 not in store.labelled(("topic",))
+
+
+def test_expanded_topic_labels(store):
+    for i in range(1, 4):
+        add_repo(store, i, doc(ML, i), topics=["pytorch", "llm"])
+        add_repo(store, 10 + i, doc(OPS, i), topics=["docker"])
+    add_repo(store, 20, doc(ML, 20), topics=["llm", "rag"])
+    clean.run(store, CLEAN_CFG)
+    tokens.run(store)
+    dedup.run(store, dedup_cfg(threshold=0.95))
+    assign.run(store, {"topic_map": TOPIC_MAP, "experiment": {"corpus": {"labels": LABEL_CFG}}})
+    assert store.db.execute("SELECT domain, label_source FROM labels WHERE repo_id = 20").fetchone() == (
+        "machine-learning", "topic_ext")
+    assert store.db.execute("SELECT topic, domain, count FROM topic_expansion").fetchall() == [
+        ("llm", "machine-learning", 3)]

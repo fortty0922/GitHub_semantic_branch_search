@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import re
 from collections import defaultdict
 
 from datasketch import LeanMinHash, MinHash, MinHashLSH
@@ -10,6 +11,7 @@ from sbs.corpus.tokens import deserialize
 
 log = logging.getLogger("sbs")
 
+MIN_NAME = 3
 FLAG_COLUMNS = (("fork", "fork"), ("is_template", "template"))
 
 
@@ -95,15 +97,30 @@ def final_kept(repo_id: int, result: dict) -> int:
     return repo_id
 
 
-def boilerplate(result: dict, stars: dict[int, int], cfg: dict) -> None:
-    """Large duplicate groups are template READMEs or spam: drop the whole group, unless the kept
-    repository clearly dominates by stars (an original with its copies)."""
+def short_name(full_name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", full_name.split("/", 1)[-1].lower())
+
+
+def is_mirror_group(keep: int, members: list[int], names: dict[int, str], share: float) -> bool:
+    """Most members carry the kept repository's name: forks and mirrors of one original."""
+    base = short_name(names.get(keep, ""))
+    if len(base) < MIN_NAME:
+        return False
+    hits = sum(base in short_name(names.get(i, "")) for i in members)
+    return hits >= share * len(members)
+
+
+def boilerplate(result: dict, stars: dict[int, int], names: dict[int, str], cfg: dict) -> None:
+    """Large duplicate groups are template READMEs or spam: drop the whole group, unless it is an
+    original with its copies (mirror names, or the kept repository dominates by stars)."""
     groups = defaultdict(list)
     for repo_id, (status, _) in result.items():
         if status in ("exact", "near"):
             groups[final_kept(repo_id, result)].append(repo_id)
     for keep, members in groups.items():
         if len(members) + 1 < cfg["max_group_size"]:
+            continue
+        if is_mirror_group(keep, members, names, cfg["mirror_share"]):
             continue
         runner_up = max(stars.get(i, 0) for i in members)
         if stars.get(keep, 0) > cfg["keep_star_ratio"] * runner_up:
@@ -138,7 +155,8 @@ def run(store: Store, cfg: dict, excluded: dict[int, str] | None = None) -> dict
     resolve(near_groups(remaining, cfg), stars, "near", result)
     for repo_id in docs:
         result.setdefault(repo_id, ("kept", None))
-    boilerplate(result, stars, cfg)
+    names = dict(store.db.execute("SELECT id, full_name FROM repos"))
+    boilerplate(result, stars, names, cfg)
 
     store.replace_all("dedup", ("repo_id", "status", "kept_id"),
                       ((i, s, k) for i, (s, k) in sorted(result.items())))
