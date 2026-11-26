@@ -6,6 +6,16 @@ is intended as a corpus for research on semantic search over repositories.
 
 See [docs/crawler.md](docs/crawler.md) for setup, usage and design.
 
+## Research goal
+
+The corpus is used to study terms whose meaning depends on the technical domain (e.g.
+*pipeline* in machine learning vs DevOps) and to build a repository search that groups results by
+meaning, names each group, and suggests follow-up keywords. The project is in the planning stage:
+
+- [docs/architecture.md](docs/architecture.md) — layout, data flow, design decisions, roadmap
+- [docs/pipeline.md](docs/pipeline.md) — data preparation, term processing, vectors, retrieval
+- [docs/evaluation.md](docs/evaluation.md) — metrics, simulated user, controls, error analysis
+
 ## Intended use and compliance
 
 This project is developed and published for **academic and non-commercial research** purposes.
